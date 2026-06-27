@@ -15,3 +15,19 @@ programs:
     start_time: "13:00"
     duration_minutes: 1
     enabled: false
+
+  - station_id: LFR
+    station_name: ニッポン放送
+    program_name: LFR_test_program_1
+    day_of_week: Saturday
+    start_time: "05:00"
+    duration_minutes: 1
+    enabled: true
+
+  - station_id: LFR
+    station_name: ニッポン放送
+    program_name: LFR_test_program_2
+    day_of_week: Saturday
+    start_time: "05:01"
+    duration_minutes: 1
+    enabled: true
