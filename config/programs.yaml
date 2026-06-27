@@ -1,0 +1,9 @@
+# 録音対象番組の設定ファイル
+programs:
+  - station_id: TBS
+    station_name: TBSラジオ
+    program_name: 安住紳一郎の日曜天国
+    day_of_week: Sunday
+    start_time: "10:00"
+    duration_minutes: 120
+    enabled: true
