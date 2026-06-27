@@ -8,5 +8,9 @@ logs/*
 
 data/metadata/metadata.json
 
+data/audio/*
+!data/audio/sample/
+!data/audio/sample/.gitkeep
+
 .vscode/
 .idea/
