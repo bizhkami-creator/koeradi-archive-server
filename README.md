@@ -19,6 +19,7 @@ koeradi-archive/
 ├── docs/
 │   └── rclone_setup.md       # Google Drive (rclone) 設定ガイド
 ├── scripts/
+│   ├── run_daily.sh          # 一括実行運用スクリプト (自動録音 ➔ メタデータ更新 ➔ クラウド同期)
 │   ├── generate_metadata.py  # 音声ファイルからmetadata.jsonを生成するスクリプト
 │   ├── record_test.sh        # radikoタイムフリー録音の個別テストスクリプト
 │   ├── record_from_config.py # 設定ファイルに基づく自動判定・録音スクリプト
@@ -39,35 +40,37 @@ koeradi-archive/
 - **Day3**: `config/programs.yaml` に基づく複数番組判定・自動録音機能 (`record_from_config.py`) の実装、dry-run機能および録音後の metadata.json 自動更新連携。
 - **Day4**: スケジュール安全実行化 (`--today`, `--yesterday`, `--date`)、重複録音防止(SKIP)処理、番組名のファイル名安全化(sanitize)、dry-run時パス・ステータス表示、ログ強化。
 - **Day5**: Google Drive同期連携 (`sync_drive.sh`) の強化、`--dry-run` オプション対応、同期前の自動メタデータ更新、エラー判定、rclone設定ガイド ([docs/rclone_setup.md](file:///home/yocchan/koeradi-archive/docs/rclone_setup.md)) の追加。
+- **Day6**: 一括実行運用スクリプト (`run_daily.sh`) の追加。自動録音・メタデータ更新・クラウド同期を単一コマンドで統合。※cron化はまだ行わず手動実行で運用。
 
-## クラウド同期 (Google Drive) について
-本システムでは、Google Driveとの同期に [rclone](https://rclone.org/) を使用します。
-- リモート名: **`koeradi-drive`**
-- 同期先フォルダ: Google Drive上の **`KoeRadiArchive`**
-- **初回セットアップ**: 同期を行う前に `rclone` のインストールとリモート設定が必要です。詳細手順は [docs/rclone_setup.md](file:///home/yocchan/koeradi-archive/docs/rclone_setup.md) を参照してください。
+## 運用スクリプトの使い方 (`run_daily.sh`)
+番組録音からメタデータ更新、Google Drive同期までを一括して実行します。
+※将来的に cron で深夜自動実行する想定のため、オプションを省略した場合はデフォルトで前日 (`--yesterday`) を対象にします。
 
-### 同期スクリプトの使い方 (`sync_drive.sh`)
 ```bash
-# dry-run モード (転送を行わず確認のみ)
-bash scripts/sync_drive.sh --dry-run
+# 昨日の録音・同期を一括実行 (デフォルト動作)
+bash scripts/run_daily.sh --yesterday
 
-# 実同期実行 (同期前に generate_metadata.py が自動実行されます)
+# 本日の録音・同期を一括実行
+bash scripts/run_daily.sh --today
+
+# 指定日の録音・同期を一括実行
+bash scripts/run_daily.sh --date 2026-06-27
+
+# dry-run モード (録音・同期共に転送を行わず確認のみ)
+bash scripts/run_daily.sh --yesterday --dry-run
+```
+
+## 各種個別スクリプトの使い方
+
+### クラウド同期 (`sync_drive.sh`)
+```bash
+bash scripts/sync_drive.sh --dry-run
 bash scripts/sync_drive.sh
 ```
 
-## 録音スクリプトの使い方
-
 ### 設定ファイルに基づく録音 (`record_from_config.py`)
-`config/programs.yaml` に定義された番組の中から、対象日付の曜日かつ `enabled: true` の番組を抽出して録音します。
-
 ```bash
-# 本日の録音対象を確認 (dry-run)
 python3 scripts/record_from_config.py --today --dry-run
-
-# 昨日の録音対象を確認 (dry-run)
-python3 scripts/record_from_config.py --yesterday --dry-run
-
-# 録音実行 (デフォルトは --today と同じ扱い)
 python3 scripts/record_from_config.py
 ```
 
