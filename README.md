@@ -35,18 +35,26 @@ koeradi-archive/
 - **Day1**: 基本プロジェクト構造の構築、`metadata.json` 生成機能、`sync_drive.sh` 雛形の作成。
 - **Day2**: radikoタイムフリー手動取得機能 (`record_test.sh`) の実装および動作検証、録音音声のGit追跡除外設定。
 - **Day3**: `config/programs.yaml` に基づく複数番組判定・自動録音機能 (`record_from_config.py`) の実装、dry-run機能および録音後の metadata.json 自動更新連携。
+- **Day4**: スケジュール安全実行化 (`--today`, `--yesterday`, `--date`)、重複録音防止(SKIP)処理、番組名のファイル名安全化(sanitize)、dry-run時パス・ステータス表示、ログ強化。
 
 ## 録音スクリプトの使い方
 
 ### 設定ファイルに基づく録音 (`record_from_config.py`)
-`config/programs.yaml` に定義された番組の中から、指定日付の曜日かつ `enabled: true` の番組を抽出して録音します。
+`config/programs.yaml` に定義された番組の中から、対象日付の曜日かつ `enabled: true` の番組を抽出して録音します。
+すでにファイルが存在する場合は二重録音を自動スキップします。
 
 ```bash
-# dry-run モード（録音を行わず対象番組の確認のみ）
+# 本日の録音対象を確認 (dry-run)
+python3 scripts/record_from_config.py --today --dry-run
+
+# 昨日の録音対象を確認 (dry-run)
+python3 scripts/record_from_config.py --yesterday --dry-run
+
+# 指定日の録音対象を確認 (dry-run)
 python3 scripts/record_from_config.py --date 2026-06-27 --dry-run
 
-# 本番録音実行（録音完了後に metadata.json も自動更新されます）
-python3 scripts/record_from_config.py --date 2026-06-27
+# 録音実行 (デフォルトは --today と同じ扱い)
+python3 scripts/record_from_config.py
 ```
 
 ### 単一番組の手動録音テスト (`record_test.sh`)
