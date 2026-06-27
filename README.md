@@ -21,7 +21,9 @@ koeradi-archive/
 │   └── rclone_setup.md       # Google Drive (rclone) 設定ガイド
 ├── scripts/
 │   ├── run_daily.sh          # 全局一括実行スクリプト (自動録音 ➔ メタデータ更新 ➔ クラウド同期)
-│   ├── record_station_day.sh # 局別・日付別バッチ録音スクリプト (録音 ➔ メタデータ更新 ➔ クラウド同期)
+│   ├── record_guide_day.sh   # 番組表JSONに基づく局別全番組録音バッチスクリプト
+│   ├── record_from_guide.py  # 番組表JSONに基づく全番組自動録音スクリプト
+│   ├── record_station_day.sh # 局別・日付別設定ファイルバッチ録音スクリプト
 │   ├── record_station_day.py # 局別・日付別判定録音スクリプト
 │   ├── fetch_program_guide.py# radiko番組表JSON取得スクリプト
 │   ├── generate_metadata.py  # 音声ファイルからmetadata.jsonを生成するスクリプト
@@ -48,6 +50,21 @@ koeradi-archive/
 - **Day7**: rclone `koeradi-drive:` 実設定と Google Drive 実同期確認完了。
 - **Day8**: 局別・日付別バッチ録音機能 (`record_station_day.sh` / `record_station_day.py`) の追加。特定放送局の対象番組をまとめて録音・同期。
 - **Day9**: radiko番組表取得機能 (`fetch_program_guide.py`) の追加。放送局IDと日付を指定し番組表XMLを取得・パースしてJSON保存。
+- **Day10**: 番組表JSONに基づく全番組自動録音機能 (`record_from_guide.py` / `record_guide_day.sh`) の追加。番組表全件自動録音、重複スキップ、ファイル名安全化、`--limit` オプション対応。
+
+## radiko番組表JSONに基づく全番組自動録音の使い方 (Day10)
+番組表JSONを利用して、指定した放送局と日付の全番組を自動録音・メタデータ更新・Google Drive同期します。
+
+```bash
+# Pythonスクリプト単体実行 (dry-run)
+python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --dry-run
+python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --limit 2
+
+# バッチスクリプト実行 (録音 ➔ メタデータ更新 ➔ Google Drive同期)
+bash scripts/record_guide_day.sh LFR 2026-06-27 --dry-run
+bash scripts/record_guide_day.sh LFR 2026-06-27 --limit 2
+bash scripts/record_guide_day.sh LFR 2026-06-27
+```
 
 ## radiko番組表取得の使い方 (`fetch_program_guide.py`)
 指定した放送局(例: `LFR`, `TBS`)と日付の番組表を取得し、JSONファイルとして保存します。
@@ -76,6 +93,5 @@ bash scripts/run_daily.sh --date 2026-06-27
 ```
 
 ## 今後の予定
-- 番組表JSONに基づく全番組自動録音・ファイル名安全化連携 (Day10以降)
 - cron / systemd による定期自動実行（全自動化）
 - 過去アーカイブの自動クリーンアップ機能
