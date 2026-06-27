@@ -2,8 +2,16 @@
 programs:
   - station_id: TBS
     station_name: TBSラジオ
-    program_name: 安住紳一郎の日曜天国
-    day_of_week: Sunday
+    program_name: test_program
+    day_of_week: Saturday
     start_time: "10:00"
-    duration_minutes: 120
+    duration_minutes: 1
     enabled: true
+
+  - station_id: LFR
+    station_name: ニッポン放送
+    program_name: sample_program
+    day_of_week: Sunday
+    start_time: "13:00"
+    duration_minutes: 1
+    enabled: false
