@@ -11,7 +11,8 @@ koeradi-archive/
 ├── README.md                 # プロジェクトの概要と説明書
 ├── requirements.txt          # 必要なPythonパッケージ一覧
 ├── config/
-│   └── programs.yaml         # 録音対象番組の設定ファイル
+│   ├── programs.yaml         # 録音対象番組の設定ファイル
+│   └── stations.yaml         # 一括録音対象放送局の設定ファイル (Day13追加)
 ├── data/
 │   ├── audio/                # 音声ファイルの保存先 (KoeRadi 命名規則で保存)
 │   │   └── sample/           # サンプル音声配置フォルダ
@@ -20,7 +21,7 @@ koeradi-archive/
 ├── docs/
 │   └── rclone_setup.md       # Google Drive (rclone) 設定ガイド
 ├── scripts/
-│   ├── run_yesterday_all.sh  # 昨日の全対象局一括録音運用スクリプト
+│   ├── run_yesterday_all.sh  # 昨日の全対象局一括録音運用スクリプト (Day13更新)
 │   ├── run_daily.sh          # 全局一括実行スクリプト (自動録音 ➔ メタデータ更新 ➔ クラウド同期)
 │   ├── record_guide_day.sh   # 番組表JSONに基づく局別全番組録音バッチスクリプト
 │   ├── record_from_guide.py  # 番組表JSONに基づく全番組自動録音スクリプト
@@ -54,6 +55,7 @@ koeradi-archive/
 - **Day10**: 番組表JSONに基づく全番組自動録音機能 (`record_from_guide.py` / `record_guide_day.sh`) および昨日の全対象局一括録音スクリプト (`run_yesterday_all.sh`) の追加。番組表全件自動録音、重複スキップ、ファイル名安全化、`--limit` オプション対応。
 - **Day11**: 専用ストレージとして外付けHDD (`/dev/sda1`) を初期化・フォーマット(ext4)・`/mnt/koeradi` への自動マウント設定。
 - **Day12**: データ保存先を Raspberry Pi SDカードから外付けHDDへ完全移行。`data -> /mnt/koeradi` のシンボリックリンク構造によりコード修正なしで移行完了。
+- **Day13**: 複数放送局設定ファイル (`config/stations.yaml`) の導入と `run_yesterday_all.sh` のマルチステーション対応。
 
 ## ストレージ構成 (Day11/Day12)
 データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
@@ -64,8 +66,19 @@ ls -l data
 df -h /mnt/koeradi
 ```
 
+## 設定ファイル構成
+
+### 放送局設定 (`config/stations.yaml`)
+`run_yesterday_all.sh` で一括録音対象とする放送局を定義します。放送局を追加・削除する際は本ファイルを編集します。
+
+```yaml
+stations:
+  - LFR
+  - TBS
+```
+
 ## 昨日の全対象局一括録音運用スクリプトの使い方 (`run_yesterday_all.sh`)
-昨日の全対象局(LFR, TBS)の全番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
+`config/stations.yaml` に設定された全局の昨日の全番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
 
 ```bash
 # dry-run モード
