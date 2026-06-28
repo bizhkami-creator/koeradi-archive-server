@@ -2,14 +2,14 @@
 # ==============================================================================
 # record_guide_day.sh
 # ------------------------------------------------------------------------------
-# KoeRadi Archive Server の radiko番組表JSONに基づくバッチ録音スクリプトです。(Day10)
-# 指定した放送局・日付の全番組を録音し、metadata更新および Google Drive 同期を行います。
+# KoeRadi Archive Server の radiko番組表JSONに基づくバッチ録音スクリプトです。(Day10 / Day14更新)
+# 指定した放送局・日付の全番組(または--filtered-onlyで抽出した番組)を録音し、metadata更新および Google Drive 同期を行います。
 #
 # 使い方:
 #   bash scripts/record_guide_day.sh LFR 2026-06-27
+#   bash scripts/record_guide_day.sh LFR 2026-06-27 --filtered-only
 #   bash scripts/record_guide_day.sh LFR 2026-06-27 --dry-run
 #   bash scripts/record_guide_day.sh LFR 2026-06-27 --limit 2
-#   bash scripts/record_guide_day.sh LFR 2026-06-27 --dry-run --limit 2
 # ==============================================================================
 
 set -euo pipefail
@@ -38,8 +38,8 @@ log_warn() {
 
 if [ "$#" -lt 2 ]; then
     log_error "引数が不足しています。"
-    log_error "使い方: bash $0 <station_id> <YYYY-MM-DD> [--dry-run] [--limit N]"
-    log_error "例: bash $0 LFR 2026-06-27 --dry-run --limit 2"
+    log_error "使い方: bash $0 <station_id> <YYYY-MM-DD> [--dry-run] [--limit N] [--filtered-only]"
+    log_error "例: bash $0 LFR 2026-06-27 --dry-run --filtered-only"
     exit 1
 fi
 
@@ -65,6 +65,10 @@ while [ "$#" -gt 0 ]; do
                 log_error "--limit オプションの後に数値が必要です。"
                 exit 1
             fi
+            ;;
+        --filtered|--filtered-only)
+            EXTRA_ARGS+=("--filtered-only")
+            shift
             ;;
         *)
             log_warn "不明なオプションです: $1"

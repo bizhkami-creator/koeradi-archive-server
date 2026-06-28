@@ -3,10 +3,12 @@
 record_from_guide.py
 ---------------------
 radiko番組表JSONを取り込み、指定された放送局(station_id)と日付(date)の
-全番組(または --limit で指定した件数)を自動的に録音するスクリプトです。(Day10)
+全番組(または --limit で指定した件数、--filtered-only でフィルタ抽出した番組)を
+自動的に録音するスクリプトです。(Day10 / Day14更新)
 
 使い方:
   python3 scripts/record_from_guide.py --station LFR --date 2026-06-27
+  python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --filtered-only
   python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --dry-run
   python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --limit 2
 """
@@ -26,7 +28,9 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 LOG_FILE = PROJECT_ROOT / "logs" / "record_from_guide.log"
 RECORD_SCRIPT = SCRIPT_DIR / "record_test.sh"
 FETCH_SCRIPT = SCRIPT_DIR / "fetch_program_guide.py"
+FILTER_SCRIPT = SCRIPT_DIR / "filter_programs.py"
 PROGRAM_GUIDES_DIR = PROJECT_ROOT / "data" / "program_guides"
+FILTERED_PROGRAMS_DIR = PROJECT_ROOT / "data" / "filtered_programs"
 
 
 def log_message(msg: str):
@@ -64,6 +68,7 @@ def main():
     parser.add_argument("--date", required=True, help="対象日付 (形式: YYYY-MM-DD)")
     parser.add_argument("--dry-run", action="store_true", help="録音を実行せずに対象番組の確認のみ行います")
     parser.add_argument("--limit", type=int, default=None, help="録音対象とする番組数の上限 (テスト用)")
+    parser.add_argument("--filtered-only", action="store_true", help="キーワードフィルターにマッチした番組のみ録音対象にします")
     args = parser.parse_args()
 
     station_id = args.station.strip().upper()
@@ -80,35 +85,60 @@ def main():
     log_message(f"対象局: {station_id}")
     log_message(f"対象日: {date_str}")
     log_message(f"dry-run: {args.dry_run}")
+    log_message(f"filtered-only: {args.filtered_only}")
     if args.limit is not None:
         log_message(f"録音上限(limit): {args.limit} 件")
 
-    # 1. 番組表JSONの存在確認と取得
-    json_path = PROGRAM_GUIDES_DIR / station_id / f"{date_str}.json"
-    if not json_path.exists():
-        log_message(f"番組表JSONが存在しません: {json_path}")
-        log_message("fetch_program_guide.py を呼び出して番組表を取得します...")
-        cmd_fetch = [sys.executable, str(FETCH_SCRIPT), "--station", station_id, "--date", date_str]
+    programs = []
+
+    if args.filtered_only:
+        filtered_json_path = FILTERED_PROGRAMS_DIR / station_id / f"{date_str}.json"
+        if not filtered_json_path.exists():
+            log_message(f"filtered_programs JSON が存在しません: {filtered_json_path}")
+            log_message("filter_programs.py を呼び出して抽出処理を実行します...")
+            cmd_filter = [sys.executable, str(FILTER_SCRIPT), "--station", station_id, "--date", date_str]
+            try:
+                subprocess.run(cmd_filter, check=True)
+                log_message("抽出処理の自動実行に成功しました。")
+            except subprocess.CalledProcessError as e:
+                log_message(f"[ERROR] 抽出処理の自動実行に失敗しました (Exit Code: {e.returncode})")
+                sys.exit(1)
+
         try:
-            subprocess.run(cmd_fetch, check=True)
-            log_message("番組表の自動取得に成功しました。")
-        except subprocess.CalledProcessError as e:
-            log_message(f"[ERROR] 番組表の自動取得に失敗しました (Exit Code: {e.returncode})")
+            with open(filtered_json_path, "r", encoding="utf-8") as f:
+                filtered_data = json.load(f)
+            programs = filtered_data.get("matched_programs", [])
+            log_message(f"filtered-only モード: 抽出番組数 {len(programs)} 件")
+        except Exception as e:
+            log_message(f"[ERROR] filtered_programs JSONの読み込みに失敗しました: {e}")
             sys.exit(1)
     else:
-        log_message(f"既存の番組表JSONを使用します: {json_path}")
+        # 1. 番組表JSONの存在確認と取得
+        json_path = PROGRAM_GUIDES_DIR / station_id / f"{date_str}.json"
+        if not json_path.exists():
+            log_message(f"番組表JSONが存在しません: {json_path}")
+            log_message("fetch_program_guide.py を呼び出して番組表を取得します...")
+            cmd_fetch = [sys.executable, str(FETCH_SCRIPT), "--station", station_id, "--date", date_str]
+            try:
+                subprocess.run(cmd_fetch, check=True)
+                log_message("番組表の自動取得に成功しました。")
+            except subprocess.CalledProcessError as e:
+                log_message(f"[ERROR] 番組表の自動取得に失敗しました (Exit Code: {e.returncode})")
+                sys.exit(1)
+        else:
+            log_message(f"既存の番組表JSONを使用します: {json_path}")
 
-    # 2. JSONファイルの読み込み
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            guide_data = json.load(f)
-    except Exception as e:
-        log_message(f"[ERROR] 番組表JSONの読み込みに失敗しました: {e}")
-        sys.exit(1)
+        # 2. JSONファイルの読み込み
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                guide_data = json.load(f)
+        except Exception as e:
+            log_message(f"[ERROR] 番組表JSONの読み込みに失敗しました: {e}")
+            sys.exit(1)
 
-    programs = guide_data.get("programs", [])
-    total_in_guide = len(programs)
-    log_message(f"番組表内の総番組数: {total_in_guide} 件")
+        programs = guide_data.get("programs", [])
+        total_in_guide = len(programs)
+        log_message(f"番組表内の総番組数: {total_in_guide} 件")
 
     # limitオプションの適用
     if args.limit is not None and args.limit > 0:

@@ -12,19 +12,22 @@ koeradi-archive/
 ├── requirements.txt          # 必要なPythonパッケージ一覧
 ├── config/
 │   ├── programs.yaml         # 録音対象番組の設定ファイル
-│   └── stations.yaml         # 一括録音対象放送局の設定ファイル (Day13追加)
+│   ├── stations.yaml         # 一括録音対象放送局の設定ファイル (Day13追加)
+│   └── recording_rules.yaml  # キーワード録音ルール設定ファイル (Day14追加)
 ├── data/
 │   ├── audio/                # 音声ファイルの保存先 (KoeRadi 命名規則で保存)
 │   │   └── sample/           # サンプル音声配置フォルダ
 │   ├── metadata/             # 生成されたメタデータ(metadata.json)の保存先
-│   └── program_guides/       # 取得したradiko番組表JSONの保存先
+│   ├── program_guides/       # 取得したradiko番組表JSONの保存先
+│   └── filtered_programs/    # キーワード抽出結果JSONの保存先 (Day14追加)
 ├── docs/
 │   └── rclone_setup.md       # Google Drive (rclone) 設定ガイド
 ├── scripts/
-│   ├── run_yesterday_all.sh  # 昨日の全対象局一括録音運用スクリプト (Day13更新)
+│   ├── run_yesterday_all.sh  # 昨日の全対象局一括録音運用スクリプト (Day14更新)
 │   ├── run_daily.sh          # 全局一括実行スクリプト (自動録音 ➔ メタデータ更新 ➔ クラウド同期)
-│   ├── record_guide_day.sh   # 番組表JSONに基づく局別全番組録音バッチスクリプト
-│   ├── record_from_guide.py  # 番組表JSONに基づく全番組自動録音スクリプト
+│   ├── record_guide_day.sh   # 番組表JSONに基づく局別全番組録音バッチスクリプト (Day14更新)
+│   ├── record_from_guide.py  # 番組表JSONに基づく全番組自動録音スクリプト (Day14更新)
+│   ├── filter_programs.py   # キーワード条件に合致する番組抽出スクリプト (Day14追加)
 │   ├── record_station_day.sh # 局別・日付別設定ファイルバッチ録音スクリプト
 │   ├── record_station_day.py # 局別・日付別判定録音スクリプト
 │   ├── fetch_program_guide.py# radiko番組表JSON取得スクリプト
@@ -56,6 +59,7 @@ koeradi-archive/
 - **Day11**: 専用ストレージとして外付けHDD (`/dev/sda1`) を初期化・フォーマット(ext4)・`/mnt/koeradi` への自動マウント設定。
 - **Day12**: データ保存先を Raspberry Pi SDカードから外付けHDDへ完全移行。`data -> /mnt/koeradi` のシンボリックリンク構造によりコード修正なしで移行完了。
 - **Day13**: 複数放送局設定ファイル (`config/stations.yaml`) の導入と `run_yesterday_all.sh` のマルチステーション対応。
+- **Day14**: キーワード検索・あいまい検索フィルタリング機能 (`config/recording_rules.yaml` / `filter_programs.py`) の導入と録音の絞り込み機能 (`run_yesterday_all.sh --filtered`) の追加。
 
 ## ストレージ構成 (Day11/Day12)
 データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
@@ -77,29 +81,60 @@ stations:
   - TBS
 ```
 
+### キーワード録音ルール設定 (`config/recording_rules.yaml`) (Day14)
+番組表の全番組録音によるディスク容量の圧迫を防ぐため、特定のキーワードに合致した番組のみを抽出・録音するための設定ファイルです。
+`title`（番組名）、`personality`（出演者）、`description`（番組内容）のいずれかにキーワードが含まれるか、類似度判定(threshold 0.75以上)にヒットした番組が抽出されます。
+
+```yaml
+rules:
+  - name: オードリー
+    keyword: オードリー
+    enabled: true
+
+  - name: 伊集院光
+    keyword: 伊集院光
+    enabled: true
+
+  - name: テスト用 ラジオショー
+    keyword: ラジオショー
+    enabled: false
+```
+
 ## 昨日の全対象局一括録音運用スクリプトの使い方 (`run_yesterday_all.sh`)
-`config/stations.yaml` に設定された全局の昨日の全番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
+`config/stations.yaml` に設定された全局の昨日の番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
 
 ```bash
-# dry-run モード
-bash scripts/run_yesterday_all.sh --dry-run
+# キーワード抽出録音 (filtered モード) - dry-run
+bash scripts/run_yesterday_all.sh --filtered --dry-run
 
-# 本番実行
+# キーワード抽出録音 (filtered モード) - 本番実行
+bash scripts/run_yesterday_all.sh --filtered
+
+# 全番組録音モード (従来動作)
+bash scripts/run_yesterday_all.sh --dry-run
 bash scripts/run_yesterday_all.sh
 ```
 
-## radiko番組表JSONに基づく全番組自動録音の使い方 (Day10)
-番組表JSONを利用して、指定した放送局と日付の全番組を自動録音・メタデータ更新・Google Drive同期します。
+## 番組表キーワード抽出の使い方 (`filter_programs.py`) (Day14)
+指定した放送局と日付の番組表JSONから、`config/recording_rules.yaml` にヒットする番組を抽出し `data/filtered_programs/{station}/{date}.json` に保存します。
 
 ```bash
-# Pythonスクリプト単体実行 (dry-run)
-python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --dry-run
-python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --limit 2
+# dry-run モード (確認のみ)
+python3 scripts/filter_programs.py --station LFR --date 2026-06-27 --dry-run
 
-# バッチスクリプト実行 (録音 ➔ メタデータ更新 ➔ Google Drive同期)
-bash scripts/record_guide_day.sh LFR 2026-06-27 --dry-run
-bash scripts/record_guide_day.sh LFR 2026-06-27 --limit 2
-bash scripts/record_guide_day.sh LFR 2026-06-27
+# 本番抽出実行
+python3 scripts/filter_programs.py --station LFR --date 2026-06-27
+```
+
+## radiko番組表JSONに基づく自動録音の使い方 (Day10/Day14)
+番組表JSONまたは抽出結果JSONを利用して、指定した放送局と日付の番組を自動録音・メタデータ更新・Google Drive同期します。
+
+```bash
+# キーワード抽出番組のみ録音対象にする場合 (--filtered-only)
+python3 scripts/record_from_guide.py --station LFR --date 2026-06-27 --filtered-only --dry-run
+
+# バッチスクリプト実行 (--filtered-only 対応)
+bash scripts/record_guide_day.sh LFR 2026-06-27 --filtered-only --dry-run
 ```
 
 ## radiko番組表取得の使い方 (`fetch_program_guide.py`)
@@ -110,17 +145,6 @@ python3 scripts/fetch_program_guide.py --station LFR --date 2026-06-27
 python3 scripts/fetch_program_guide.py --station TBS --date 2026-06-27
 ```
 
-## 局別・日付別バッチ録音の使い方 (`record_station_day.sh`)
-特定放送局(例: `LFR`, `TBS`)と日付を指定し、該当する対象番組をまとめて録音・メタデータ更新・Google Drive同期します。
-
-```bash
-# dry-run モード (確認のみ)
-bash scripts/record_station_day.sh LFR 2026-06-27 --dry-run
-
-# 本番録音・同期実行
-bash scripts/record_station_day.sh LFR 2026-06-27
-```
-
 ## 全局一括運用スクリプトの使い方 (`run_daily.sh`)
 ```bash
 # 昨日の録音・同期を一括実行 (デフォルト動作)
@@ -129,5 +153,6 @@ bash scripts/run_daily.sh --date 2026-06-27
 ```
 
 ## 今後の予定
+- Webブラウザ等によるルール管理画面の構築 (Day15)
 - cron / systemd による定期自動実行（全自動化）
 - 過去アーカイブの自動クリーンアップ機能

@@ -15,6 +15,9 @@ data/audio/*
 data/program_guides/*
 !data/program_guides/.gitkeep
 
+data/filtered_programs/*
+!data/filtered_programs/.gitkeep
+
 .vscode/
 .idea/
 data_backup_*

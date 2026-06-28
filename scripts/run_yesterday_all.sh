@@ -3,11 +3,13 @@
 # run_yesterday_all.sh
 # ------------------------------------------------------------------------------
 # 昨日の全対象局(config/stations.yamlに定義)の番組表JSONに基づく自動録音・
-# メタデータ更新・Google Drive同期をワンコマンドで一括実行する運用スクリプトです。(Day13更新)
+# メタデータ更新・Google Drive同期をワンコマンドで一括実行する運用スクリプトです。(Day13/Day14更新)
 #
 # 使い方:
 #   bash scripts/run_yesterday_all.sh
+#   bash scripts/run_yesterday_all.sh --filtered
 #   bash scripts/run_yesterday_all.sh --dry-run
+#   bash scripts/run_yesterday_all.sh --filtered --dry-run
 # ==============================================================================
 
 set -euo pipefail
@@ -16,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOG_FILE="$PROJECT_ROOT/logs/run_yesterday_all.log"
 RECORD_GUIDE_DAY_SH="$SCRIPT_DIR/record_guide_day.sh"
+FILTER_PY="$SCRIPT_DIR/filter_programs.py"
 STATIONS_YAML="$PROJECT_ROOT/config/stations.yaml"
 
 mkdir -p "$PROJECT_ROOT/logs"
@@ -34,15 +37,20 @@ log_warn() {
 
 # 引数の解析
 IS_DRY_RUN=false
+IS_FILTERED=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)
             IS_DRY_RUN=true
             shift
             ;;
+        --filtered)
+            IS_FILTERED=true
+            shift
+            ;;
         *)
             log_error "不明な引数です: $1"
-            log_error "使い方: bash $0 [--dry-run]"
+            log_error "使い方: bash $0 [--filtered] [--dry-run]"
             exit 1
             ;;
     esac
@@ -80,6 +88,11 @@ if [ "$IS_DRY_RUN" = true ]; then
     DRY_RUN_ARG="--dry-run"
 fi
 
+FILTERED_ARG=""
+if [ "$IS_FILTERED" = true ]; then
+    FILTERED_ARG="--filtered-only"
+fi
+
 START_TIME_SEC=$(date +%s)
 START_TIME_STR=$(date '+%Y-%m-%d %H:%M:%S')
 
@@ -89,6 +102,7 @@ log "=================================================="
 log "開始時刻: $START_TIME_STR"
 log "対象日: $TARGET_DATE"
 log "対象局一覧: ${STATIONS[*]}"
+log "filteredモード: $IS_FILTERED"
 log "dry-run: $IS_DRY_RUN"
 
 SUCCESS_COUNT=0
@@ -100,8 +114,20 @@ for station in "${STATIONS[@]}"; do
     log "--------------------------------------------------"
     
     STATION_START_SEC=$(date +%s)
+
+    if [ "$IS_FILTERED" = true ]; then
+        log ">>> [放送局: $station] キーワードフィルタ抽出処理実行..."
+        set +e
+        python3 "$FILTER_PY" --station "$station" --date "$TARGET_DATE" $DRY_RUN_ARG 2>&1 | tee -a "$LOG_FILE"
+        FILTER_EXIT="${PIPESTATUS[0]}"
+        set -e
+        if [ "$FILTER_EXIT" -ne 0 ]; then
+            log_error ">>> [放送局: $station] フィルタ抽出処理失敗"
+        fi
+    fi
+
     set +e
-    bash "$RECORD_GUIDE_DAY_SH" "$station" "$TARGET_DATE" $DRY_RUN_ARG 2>&1 | tee -a "$LOG_FILE"
+    bash "$RECORD_GUIDE_DAY_SH" "$station" "$TARGET_DATE" $FILTERED_ARG $DRY_RUN_ARG 2>&1 | tee -a "$LOG_FILE"
     STATION_EXIT="${PIPESTATUS[0]}"
     set -e
     STATION_END_SEC=$(date +%s)
@@ -127,6 +153,7 @@ log "開始時刻: $START_TIME_STR"
 log "終了時刻: $END_TIME_STR"
 log "対象日: $TARGET_DATE"
 log "対象局一覧: ${STATIONS[*]}"
+log "filteredモード: $IS_FILTERED"
 log "総対象局数: ${#STATIONS[@]}"
 log "成功局数: $SUCCESS_COUNT"
 log "失敗局数: $FAIL_COUNT"
