@@ -52,6 +52,17 @@ koeradi-archive/
 - **Day8**: 局別・日付別バッチ録音機能 (`record_station_day.sh` / `record_station_day.py`) の追加。特定放送局の対象番組をまとめて録音・同期。
 - **Day9**: radiko番組表取得機能 (`fetch_program_guide.py`) の追加。放送局IDと日付を指定し番組表XMLを取得・パースしてJSON保存。
 - **Day10**: 番組表JSONに基づく全番組自動録音機能 (`record_from_guide.py` / `record_guide_day.sh`) および昨日の全対象局一括録音スクリプト (`run_yesterday_all.sh`) の追加。番組表全件自動録音、重複スキップ、ファイル名安全化、`--limit` オプション対応。
+- **Day11**: 専用ストレージとして外付けHDD (`/dev/sda1`) を初期化・フォーマット(ext4)・`/mnt/koeradi` への自動マウント設定。
+- **Day12**: データ保存先を Raspberry Pi SDカードから外付けHDDへ完全移行。`data -> /mnt/koeradi` のシンボリックリンク構造によりコード修正なしで移行完了。
+
+## ストレージ構成 (Day11/Day12)
+データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
+
+```bash
+# マウント状態およびシンボリックリンクの確認
+ls -l data
+df -h /mnt/koeradi
+```
 
 ## 昨日の全対象局一括録音運用スクリプトの使い方 (`run_yesterday_all.sh`)
 昨日の全対象局(LFR, TBS)の全番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
