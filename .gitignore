@@ -17,3 +17,4 @@ data/program_guides/*
 
 .vscode/
 .idea/
+data_backup_*
