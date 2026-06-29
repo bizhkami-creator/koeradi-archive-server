@@ -119,24 +119,26 @@ fi
 
 # 3. Google Drive 同期 (sync_drive.sh)
 log "--- [ステップ 3/3] Google Drive 同期処理開始 ---"
-SYNC_DRY_RUN_ARG=""
 if [ "$IS_DRY_RUN" = true ]; then
-    SYNC_DRY_RUN_ARG="--dry-run"
-fi
-
-set +e
-bash "$SYNC_SH" $SYNC_DRY_RUN_ARG 2>&1 | tee -a "$LOG_FILE"
-SYNC_EXIT="${PIPESTATUS[0]}"
-set -e
-
-if [ "$SYNC_EXIT" -eq 0 ]; then
-    log "--- Google Drive 同期完了 ---"
+    log "[DRY-RUN] dry-run モードのため、1局ごとの Google Drive 同期チェックはスキップします。"
     log "=================================================="
-    log "=== バッチ処理正常完了 (録音・同期成功) ==="
+    log "=== バッチ処理正常完了 (dry-run) ==="
     log "=================================================="
 else
-    log_warn "Google Drive 同期処理が失敗または警告終了しました (Exit Code: $SYNC_EXIT)。"
-    log "=================================================="
-    log "=== バッチ処理一部完了 (録音成功 / 同期未完了) ==="
-    log "=================================================="
+    set +e
+    bash "$SYNC_SH" 2>&1 | tee -a "$LOG_FILE"
+    SYNC_EXIT="${PIPESTATUS[0]}"
+    set -e
+
+    if [ "$SYNC_EXIT" -eq 0 ]; then
+        log "--- Google Drive 同期完了 ---"
+        log "=================================================="
+        log "=== バッチ処理正常完了 (録音・同期成功) ==="
+        log "=================================================="
+    else
+        log_warn "Google Drive 同期処理が失敗または警告終了しました (Exit Code: $SYNC_EXIT)。"
+        log "=================================================="
+        log "=== バッチ処理一部完了 (録音成功 / 同期未完了) ==="
+        log "=================================================="
+    fi
 fi

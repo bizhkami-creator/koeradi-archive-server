@@ -4,14 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>こえラジオ アーカイブ - 録音ルール管理</title>
-    <!-- CSSスタイルの読み込み -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <!-- ヘッダーエリア -->
         <header>
-            <h1>こえラジオ 録音ルール管理画面</h1>
+            <div class="nav-bar">
+                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
+                <a href="{{ url_for('stations_page') }}" class="btn btn-outline">📻 Stations</a>
+            </div>
+            <h1>録音ルール管理 (Recording Rules)</h1>
             <p>キーワードに基づいたラジオ番組の自動録音条件を設定・管理します</p>
         </header>
 
@@ -66,7 +69,6 @@
                             {% endif %}
                         </td>
                         <td class="action-btns">
-                            <!-- 有効/無効 切り替えボタン -->
                             <form action="{{ url_for('toggle_rule', index=loop.index0) }}" method="POST" style="display:inline;">
                                 {% if rule.enabled %}
                                 <button type="submit" class="btn btn-toggle-off">無効にする</button>
@@ -74,7 +76,6 @@
                                 <button type="submit" class="btn btn-toggle-on">有効にする</button>
                                 {% endif %}
                             </form>
-                            <!-- 削除ボタン -->
                             <form action="{{ url_for('delete_rule', index=loop.index0) }}" method="POST" style="display:inline;" onsubmit="return confirm('本当に削除しますか？');">
                                 <button type="submit" class="btn btn-danger">削除</button>
                             </form>
@@ -89,7 +90,7 @@
         </div>
 
         <!-- dry-run 実行機能 -->
-        <div class="card">
+        <div class="card" id="dry-run-section">
             <h2 class="card-title">
                 フィルタ録音 dry-run 実行
                 <span id="loading-spinner" class="loading-spinner">⏳ 実行中...</span>
@@ -106,7 +107,6 @@
         </div>
     </div>
 
-    <!-- dry-run実行用のJavaScript -->
     <script>
         function executeDryRun() {
             const btn = document.getElementById('run-btn');
@@ -114,18 +114,14 @@
             const consoleWrapper = document.getElementById('console-wrapper');
             const consoleOutput = document.getElementById('console-output');
 
-            // ボタンの無効化とスピナーの表示
             btn.disabled = true;
             spinner.style.display = 'inline';
             consoleWrapper.style.display = 'block';
             consoleOutput.textContent = '処理を実行中... しばらくお待ちください。';
 
-            // バックエンドの dry-run エンドポイントを呼び出し
             fetch("{{ url_for('run_dry_run') }}", {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
+                headers: { 'Content-Type': 'application/json' }
             })
             .then(response => response.json())
             .then(data => {

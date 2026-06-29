@@ -72,7 +72,13 @@ try:
         data = yaml.safe_load(f)
         stations = data.get('stations', [])
         for s in stations:
-            print(s)
+            if isinstance(s, dict):
+                if s.get('enabled', True):
+                    sid = s.get('station_id')
+                    if sid:
+                        print(sid)
+            elif isinstance(s, str):
+                print(s)
 except Exception as e:
     sys.stderr.write(str(e) + '\n')
     sys.exit(1)

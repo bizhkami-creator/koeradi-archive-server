@@ -1,3 +1,46 @@
 stations:
-  - LFR
-  - TBS
+- station_id: TBS
+  station_name: TBSラジオ
+  enabled: true
+- station_id: QRR
+  station_name: 文化放送
+  enabled: true
+- station_id: LFR
+  station_name: ニッポン放送
+  enabled: true
+- station_id: RN1
+  station_name: ラジオNIKKEI第1
+  enabled: true
+- station_id: RN2
+  station_name: ラジオNIKKEI第2
+  enabled: true
+- station_id: INT
+  station_name: interfm
+  enabled: true
+- station_id: FMT
+  station_name: TOKYO FM
+  enabled: true
+- station_id: FMJ
+  station_name: J-WAVE
+  enabled: true
+- station_id: JORF
+  station_name: ラジオ日本
+  enabled: true
+- station_id: BAYFM78
+  station_name: BAYFM78
+  enabled: true
+- station_id: NACK5
+  station_name: NACK5
+  enabled: true
+- station_id: YFM
+  station_name: ＦＭヨコハマ
+  enabled: true
+- station_id: IBS
+  station_name: LuckyFM 茨城放送
+  enabled: true
+- station_id: JOAK
+  station_name: NHK AM（東京）
+  enabled: true
+- station_id: JOAK-FM
+  station_name: NHK FM（東京）
+  enabled: true
