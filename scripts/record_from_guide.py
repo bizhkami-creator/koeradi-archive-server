@@ -59,14 +59,13 @@ def log_message(msg: str):
         f.write(formatted_msg + "\n")
 
 
-def sanitize_filename(name: str) -> str:
-    r"""
-    番組名に含まれるファイル名として使えない禁忌文字やスペースを安全な文字(_)に置換し、
-    長すぎる場合は先頭50文字に短縮します。
-    """
-    clean_name = re.sub(r'[/\\:*?"<>|\s]', '_', name)
-    return clean_name[:50]
+def sanitize_title(name: str) -> str:
+    clean = re.sub(r'[/\\:*?"<>|\s]', '_', str(name or ''))
+    return clean[:50]
 
+def sanitize_personality(name: str) -> str:
+    clean = re.sub(r'[/\\:*?"<>|\s]', '_', str(name or ''))
+    return clean[:30]
 
 def parse_start_datetime(start_time_iso: str) -> str:
     """
@@ -177,12 +176,16 @@ def main():
 
         for idx, prog in enumerate(programs, 1):
             raw_title = prog.get("title", "無題")
-            safe_title = sanitize_filename(raw_title)
+            raw_person = prog.get("personality", "")
+            safe_title = sanitize_title(raw_title)
+            safe_person = sanitize_personality(raw_person)
+            prog_filename_part = f"{safe_title}_{safe_person}" if safe_person else safe_title
+            
             start_iso = prog.get("start_time")
             duration = str(prog.get("duration_minutes", 0))
             start_datetime = parse_start_datetime(start_iso)
 
-            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
+            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{prog_filename_part}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
             status = "already_exists_skip" if abs_output_path.exists() else "will_record"
 
@@ -201,12 +204,16 @@ def main():
 
         for idx, prog in enumerate(programs, 1):
             raw_title = prog.get("title", "無題")
-            safe_title = sanitize_filename(raw_title)
+            raw_person = prog.get("personality", "")
+            safe_title = sanitize_title(raw_title)
+            safe_person = sanitize_personality(raw_person)
+            prog_filename_part = f"{safe_title}_{safe_person}" if safe_person else safe_title
+
             start_iso = prog.get("start_time")
             duration = str(prog.get("duration_minutes", 0))
             start_datetime = parse_start_datetime(start_iso)
 
-            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
+            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{prog_filename_part}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
 
             log_message(f"[{idx}/{target_count}] 処理中: {raw_title}")
@@ -217,7 +224,7 @@ def main():
                 skip_count += 1
             else:
                 log_message(f"録音開始: {station_id} - {raw_title} (日時: {start_datetime}, 時間: {duration}分)")
-                cmd = ["bash", str(RECORD_SCRIPT), station_id, start_datetime, duration, safe_title]
+                cmd = ["bash", str(RECORD_SCRIPT), station_id, start_datetime, duration, prog_filename_part]
                 try:
                     subprocess.run(cmd, check=True)
                     log_message(f"録音成功: {station_id} - {raw_title}")

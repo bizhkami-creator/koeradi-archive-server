@@ -17,8 +17,11 @@
         <!-- メニューバー -->
         <div class="card menu-card">
             <div class="menu-buttons">
+                <a href="{{ url_for('program_guide_page') }}" class="btn btn-primary" style="background-color: #0284c7;">📅 Program Guide</a>
+                <a href="{{ url_for('manual_recording_page') }}" class="btn btn-primary" style="background-color: #ef4444;">🎙️ Manual Recording</a>
+                <a href="{{ url_for('recordings_page') }}" class="btn btn-primary" style="background-color: #8b5cf6;">🎵 Recordings</a>
                 <a href="{{ url_for('rules_page') }}" class="btn btn-primary">📋 Recording Rules</a>
-                <a href="{{ url_for('stations_page') }}" class="btn btn-primary" style="background-color: #0284c7;">📻 Stations</a>
+                <a href="{{ url_for('stations_page') }}" class="btn btn-primary" style="background-color: #475569;">📻 Stations</a>
                 <button class="btn btn-secondary" onclick="executeDryRun()">⚡ Dry Run 実行</button>
                 <button class="btn btn-outline" onclick="location.reload()">🔄 Refresh</button>
             </div>

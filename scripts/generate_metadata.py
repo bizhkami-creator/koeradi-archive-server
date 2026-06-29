@@ -40,11 +40,10 @@ def load_stations_info(base_dir: Path):
             print(f"警告: stations.yaml の読み込み失敗: {e}")
     return id_to_name, name_to_id
 
-def parse_audio_file(path: Path, audio_dir: Path, id_to_name: dict, name_to_id: dict):
+def parse_audio_file(path: Path, audio_dir: Path, base_dir: Path, id_to_name: dict, name_to_id: dict):
     """
     ファイルパスおよびファイル名からメタデータ要素を構築します。
-    新フォーマット: YYYY-MM-DD_番組名.m4a
-    新ディレクトリ: data/audio/{station_name}/{YYYY}/{MM}/{file_name}
+    フォーマット: YYYY-MM-DD_番組名_パーソナリティ名.m4a または YYYY-MM-DD_番組名.m4a
     """
     file_name = path.name
     rel_parts = path.relative_to(audio_dir).parts
@@ -67,11 +66,11 @@ def parse_audio_file(path: Path, audio_dir: Path, id_to_name: dict, name_to_id: 
         else:
             station_name = top_dir
 
-    # ファイル名の解析 (YYYY-MM-DD_番組名 または 旧: YYYY-MM-DD_STATION_番組名)
     date_str = "unknown"
     year_str = "unknown"
     month_str = "unknown"
     program_name = "unknown"
+    personality = ""
     
     parts = stem.split('_', 2)
     if len(parts) >= 2 and DATE_PATTERN.match(parts[0]):
@@ -86,8 +85,45 @@ def parse_audio_file(path: Path, audio_dir: Path, id_to_name: dict, name_to_id: 
                 station_name = id_to_name.get(station_id, station_id)
             program_name = parts[2]
         else:
-            # 新フォーマット: YYYY-MM-DD_番組名 (stem.split('_', 1) 相当)
-            program_name = stem[len(date_str) + 1:]
+            # YYYY-MM-DD_番組名_パーソナリティ名 または YYYY-MM-DD_番組名
+            rest = stem[len(date_str) + 1:]
+            
+            # 番組ガイドJSONからの検索を試みる
+            guide_json = base_dir / "data" / "program_guides" / station_id / f"{date_str}.json"
+            filt_json = base_dir / "data" / "filtered_programs" / station_id / f"{date_str}.json"
+            
+            found_match = False
+            for jpath in (filt_json, guide_json):
+                if jpath.exists():
+                    try:
+                        with open(jpath, 'r', encoding='utf-8') as f:
+                            gdata = json.load(f)
+                            progs = gdata.get('programs', []) or gdata.get('matched_programs', [])
+                            for p in progs:
+                                t = p.get('title', '')
+                                st_title = re.sub(r'[/\\:*?"<>|\s]', '_', t)[:50]
+                                per = p.get('personality', '')
+                                st_per = re.sub(r'[/\\:*?"<>|\s]', '_', per)[:30] if per else ''
+                                
+                                expected_stem = f"{st_title}_{st_per}" if st_per else st_title
+                                if rest == expected_stem or rest == st_title:
+                                    program_name = t
+                                    personality = per
+                                    found_match = True
+                                    break
+                    except Exception:
+                        pass
+                if found_match:
+                    break
+            
+            if not found_match:
+                # ファイル名からのフォールバック解析
+                if '_' in rest:
+                    p_name, p_pers = rest.rsplit('_', 1)
+                    program_name = p_name
+                    personality = p_pers
+                else:
+                    program_name = rest
     else:
         program_name = stem
 
@@ -96,6 +132,7 @@ def parse_audio_file(path: Path, audio_dir: Path, id_to_name: dict, name_to_id: 
         "station_id": station_id,
         "station_name": station_name,
         "program_name": program_name,
+        "personality": personality,
         "date": date_str,
         "year": year_str,
         "month": month_str,
@@ -119,7 +156,7 @@ def generate_metadata():
 
     for path in sorted(audio_dir.rglob('*')):
         if path.is_file() and path.suffix.lower() in TARGET_EXTENSIONS:
-            item = parse_audio_file(path, audio_dir, id_to_name, name_to_id)
+            item = parse_audio_file(path, audio_dir, base_dir, id_to_name, name_to_id)
             metadata_list.append(item)
             print(f"検出: {item['relative_path']}")
 

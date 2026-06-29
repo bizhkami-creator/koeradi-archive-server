@@ -11,7 +11,9 @@
         <!-- ヘッダーエリア -->
         <header>
             <div class="nav-bar">
-                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboardに戻る</a>
+                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
+                <a href="{{ url_for('recordings_page') }}" class="btn btn-outline" style="border-color: #8b5cf6; color: #a78bfa;">🎵 Recordings</a>
+                <a href="{{ url_for('rules_page') }}" class="btn btn-outline">📋 Rules</a>
             </div>
             <h1>対象放送局一覧 (Stations)</h1>
             <p>現在のエリア・IP環境で取得可能な radiko 放送局の設定一覧です</p>

@@ -1,12 +1,13 @@
 import os
 import re
+import sys
 import json
 import shutil
 import datetime
 import difflib
 import subprocess
 import yaml
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, abort
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
@@ -315,6 +316,379 @@ def run_dry_run():
     output_lines.append(f"全対象局 ({len(stations)}局) の確認完了: 合計 {total_matched} 件の番組が録音対象として抽出されました。")
     
     return jsonify({'success': True, 'output': '\n'.join(output_lines)})
+
+def format_size(size_bytes):
+    """ファイルサイズを人間が読みやすい形式に変換"""
+    if size_bytes is None or size_bytes < 0:
+        return "不明"
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+@app.route('/recordings')
+def recordings_page():
+    """録音一覧ページ (検索・フィルター・再生)"""
+    selected_station = request.args.get('station', '').strip()
+    selected_date = request.args.get('date', '').strip()
+    query = request.args.get('q', '').strip()
+    
+    meta_file = os.path.join(DATA_DIR, 'metadata', 'metadata.json')
+    
+    # metadata.json が存在しない場合は自動生成を試みる
+    if not os.path.exists(meta_file):
+        try:
+            gen_script = os.path.join(BASE_DIR, 'scripts', 'generate_metadata.py')
+            subprocess.run(['python3', gen_script], check=True)
+        except Exception as e:
+            print(f"metadata.json 生成失敗: {e}")
+            
+    items = []
+    stations_set = set()
+    dates_set = set()
+    
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                raw_items = json.load(f) or []
+                for item in raw_items:
+                    st_name = item.get('station_name', item.get('station_id', 'unknown'))
+                    st_id = item.get('station_id', '')
+                    date_str = item.get('date', 'unknown')
+                    prog_name = item.get('program_name', '')
+                    file_name = item.get('file_name', '')
+                    rel_path = item.get('relative_path', '')
+                    
+                    if st_name and st_name != 'unknown':
+                        stations_set.add(st_name)
+                    if date_str and date_str != 'unknown':
+                        dates_set.add(date_str)
+                    
+                    # 実ファイルの存在確認とファイルサイズ取得
+                    abs_path = os.path.join(DATA_DIR, rel_path)
+                    file_size_str = "不明"
+                    if os.path.exists(abs_path):
+                        file_size_str = format_size(os.path.getsize(abs_path))
+                        
+                    items.append({
+                        'file_name': file_name,
+                        'station_id': st_id,
+                        'station_name': st_name,
+                        'program_name': prog_name,
+                        'date': date_str,
+                        'year': item.get('year', ''),
+                        'month': item.get('month', ''),
+                        'relative_path': rel_path,
+                        'file_size': file_size_str
+                    })
+        except Exception as e:
+            print(f"metadata.json 読み込み失敗: {e}")
+
+    # フィルタリング
+    filtered_items = []
+    for item in items:
+        # 局フィルター (station_name または station_id)
+        if selected_station:
+            if selected_station != item['station_name'] and selected_station != item['station_id']:
+                continue
+        # 日付フィルター
+        if selected_date:
+            if selected_date != item['date']:
+                continue
+        # キーワード検索
+        if query:
+            q_lower = query.lower()
+            if q_lower not in item['program_name'].lower() and q_lower not in item['file_name'].lower():
+                continue
+        filtered_items.append(item)
+        
+    # 日付・ファイル名で降順ソート
+    filtered_items.sort(key=lambda x: (x['date'], x['file_name']), reverse=True)
+    
+    stations_list = sorted(list(stations_set))
+    dates_list = sorted(list(dates_set), reverse=True)
+    
+    return render_template(
+        'recordings.html',
+        recordings=filtered_items,
+        stations=stations_list,
+        dates=dates_list,
+        selected_station=selected_station,
+        selected_date=selected_date,
+        query=query,
+        total_count=len(filtered_items)
+    )
+
+@app.route('/audio/<path:filepath>')
+def serve_audio(filepath):
+    """録音音声ファイルの配信 (Path Traversal防止)"""
+    audio_dir = os.path.realpath(os.path.join(DATA_DIR, 'audio'))
+    
+    # 配信対象の完全パスを作成
+    requested_path = os.path.realpath(os.path.join(audio_dir, filepath))
+    
+    # requested_path が audio_dir の配下に存在するか厳格にチェック
+    if not requested_path.startswith(audio_dir + os.sep) and requested_path != audio_dir:
+        abort(403)
+        
+    if not os.path.exists(requested_path) or os.path.isdir(requested_path):
+        abort(404)
+        
+    return send_from_directory(audio_dir, filepath)
+
+def get_manual_recording_logs(max_lines=100):
+    """manual_recording.log から最新行を取得"""
+    log_path = os.path.join(LOGS_DIR, 'manual_recording.log')
+    if not os.path.exists(log_path):
+        return "ログファイルはまだ存在しません。"
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+            return ''.join(lines[-max_lines:])
+    except Exception as e:
+        return f"ログ読み込みエラー: {e}"
+
+def generate_preview(date_str, station_ids):
+    """指定された日付と放送局IDの組み合わせに対し、録音プレビュー情報を生成"""
+    all_stations = load_stations()
+    station_map = {s['station_id']: s.get('station_name', s['station_id']) for s in all_stations}
+    
+    filtered_dir = os.path.join(DATA_DIR, 'filtered_programs')
+    filter_script = os.path.join(BASE_DIR, 'scripts', 'filter_programs.py')
+    
+    preview_items = []
+    
+    year = date_str[:4]
+    month = date_str[5:7]
+    
+    for st in station_ids:
+        st_name = station_map.get(st, st)
+        
+        filtered_json_path = os.path.join(filtered_dir, st, f"{date_str}.json")
+        if not os.path.exists(filtered_json_path):
+            try:
+                subprocess.run(['python3', filter_script, '--station', st, '--date', date_str], check=True, timeout=15)
+            except Exception as e:
+                print(f"filter_programs.py 実行エラー ({st}, {date_str}): {e}")
+                
+        if os.path.exists(filtered_json_path):
+            try:
+                with open(filtered_json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    matched_progs = data.get('matched_programs', [])
+                    for prog in matched_progs:
+                        raw_title = prog.get('title', '無題')
+                        safe_title = re.sub(r'[/\\:*?"<>|\s]', '_', raw_title)[:50]
+                        
+                        ft = prog.get('ft', '')
+                        start_time = f"{ft[8:10]}:{ft[10:12]}" if len(ft) >= 12 else prog.get('start_time', '-')
+                        duration = prog.get('duration_minutes', 0)
+                        matched_rule = prog.get('matched_rule', '')
+                        
+                        rel_output_path = f"data/audio/{st_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
+                        abs_output_path = os.path.join(BASE_DIR, rel_output_path)
+                        
+                        file_exists = os.path.exists(abs_output_path)
+                        status = "already_exists_skip" if file_exists else "will_record"
+                        
+                        preview_items.append({
+                            'station_id': st,
+                            'station_name': st_name,
+                            'date': date_str,
+                            'start_time': start_time,
+                            'program_name': raw_title,
+                            'matched_rule': matched_rule,
+                            'duration_minutes': duration,
+                            'output_path': rel_output_path,
+                            'status': status
+                        })
+            except Exception as e:
+                print(f"filtered_programs JSON 読み込みエラー ({st}): {e}")
+                
+    preview_items.sort(key=lambda x: (0 if x['status'] == 'will_record' else 1, x['start_time']))
+    return preview_items
+
+@app.route('/manual-recording', methods=['GET', 'POST'])
+def manual_recording_page():
+    """手動録音ジョブ実行ページ"""
+    all_stations = load_stations()
+    enabled_stations = [s for s in all_stations if s.get('enabled', True)]
+    
+    yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    selected_date = yesterday_str
+    selected_stations = [s['station_id'] for s in enabled_stations]
+    
+    preview_items = None
+    message = None
+    message_type = "info"
+    
+    if request.method == 'POST':
+        action = request.form.get('action')
+        selected_date = request.form.get('date', yesterday_str).strip()
+        selected_stations = request.form.getlist('stations')
+        
+        if not selected_stations:
+            message = "対象の放送局を少なくとも1つ選択してください。"
+            message_type = "danger"
+        else:
+            if action == 'preview':
+                preview_items = generate_preview(selected_date, selected_stations)
+                if not preview_items:
+                    message = "選択された条件にマッチする録音対象番組はありませんでした。"
+                    message_type = "warning"
+            elif action == 'start':
+                runner_script = os.path.join(BASE_DIR, 'scripts', 'run_manual_recording.py')
+                cmd = [sys.executable, runner_script, '--date', selected_date, '--stations'] + selected_stations
+                try:
+                    subprocess.Popen(cmd, cwd=BASE_DIR)
+                    message = "Recording job started. Please check logs."
+                    message_type = "success"
+                except Exception as e:
+                    message = f"ジョブの起動に失敗しました: {e}"
+                    message_type = "danger"
+                preview_items = generate_preview(selected_date, selected_stations)
+
+    logs_text = get_manual_recording_logs(100)
+    
+    return render_template(
+        'manual_recording.html',
+        enabled_stations=enabled_stations,
+        selected_date=selected_date,
+        selected_stations=selected_stations,
+        preview_items=preview_items,
+        message=message,
+        message_type=message_type,
+        logs_text=logs_text
+    )
+
+@app.route('/manual-recording/logs')
+def manual_recording_logs_api():
+    """ジョブログの最新行を取得するAPI"""
+    return jsonify({'logs': get_manual_recording_logs(100)})
+
+def check_program_recorded(station_id, station_name, date_str, title, personality):
+    """番組が録音済みかどうか判定"""
+    safe_title = re.sub(r'[/\\:*?"<>|\s]', '_', str(title or ''))[:50]
+    safe_person = re.sub(r'[/\\:*?"<>|\s]', '_', str(personality or ''))[:30]
+    
+    if safe_person:
+        prog_filename_part = f"{safe_title}_{safe_person}"
+    else:
+        prog_filename_part = safe_title
+        
+    year = date_str[:4]
+    month = date_str[5:7]
+    
+    rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{prog_filename_part}.m4a"
+    abs_output_path = os.path.join(BASE_DIR, rel_output_path)
+    
+    rel_output_path_old = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
+    abs_output_path_old = os.path.join(BASE_DIR, rel_output_path_old)
+    
+    return os.path.exists(abs_output_path) or os.path.exists(abs_output_path_old)
+
+@app.route('/program-guide', methods=['GET', 'POST'])
+def program_guide_page():
+    """番組表一覧ページ"""
+    all_stations = load_stations()
+    enabled_stations = [s for s in all_stations if s.get('enabled', True)]
+    
+    today_str = datetime.date.today().strftime('%Y-%m-%d')
+    
+    selected_date = request.args.get('date') or request.form.get('date') or today_str
+    selected_station = request.args.get('station') or request.form.get('station') or (enabled_stations[0]['station_id'] if enabled_stations else 'LFR')
+    
+    station_map = {s['station_id']: s.get('station_name', s['station_id']) for s in all_stations}
+    station_name = station_map.get(selected_station, selected_station)
+    
+    guide_items = []
+    message = None
+    message_type = "info"
+    
+    guides_dir = os.path.join(DATA_DIR, 'program_guides')
+    json_path = os.path.join(guides_dir, selected_station, f"{selected_date}.json")
+    
+    if request.method == 'POST' or not os.path.exists(json_path):
+        try:
+            fetch_script = os.path.join(BASE_DIR, 'scripts', 'fetch_program_guide.py')
+            subprocess.run(['python3', fetch_script, '--station', selected_station, '--date', selected_date], check=True, timeout=15)
+        except Exception as e:
+            print(f"fetch_program_guide.py 実行エラー: {e}")
+            
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                guide_data = json.load(f) or {}
+                raw_progs = guide_data.get('programs', [])
+                for prog in raw_progs:
+                    title = prog.get('title', '無題')
+                    personality = prog.get('personality', '')
+                    start_iso = prog.get('start_time', '')
+                    end_iso = prog.get('end_time', '')
+                    duration = prog.get('duration_minutes', 0)
+                    desc = prog.get('description', '')
+                    
+                    dt_start = datetime.datetime.fromisoformat(start_iso) if start_iso else None
+                    dt_end = datetime.datetime.fromisoformat(end_iso) if end_iso else None
+                    
+                    start_time_fmt = dt_start.strftime('%H:%M') if dt_start else '-'
+                    end_time_fmt = dt_end.strftime('%H:%M') if dt_end else '-'
+                    start_datetime_str = dt_start.strftime('%Y%m%d%H%M') if dt_start else ''
+                    
+                    is_recorded = check_program_recorded(selected_station, station_name, selected_date, title, personality)
+                    
+                    guide_items.append({
+                        'title': title,
+                        'personality': personality,
+                        'description': desc,
+                        'start_time': start_time_fmt,
+                        'end_time': end_time_fmt,
+                        'start_datetime': start_datetime_str,
+                        'duration': duration,
+                        'recorded': is_recorded,
+                        'status': 'recorded' if is_recorded else 'not_recorded'
+                    })
+        except Exception as e:
+            message = f"番組表の読み込みに失敗しました: {e}"
+            message_type = "danger"
+            
+    return render_template(
+        'program_guide.html',
+        enabled_stations=enabled_stations,
+        selected_date=selected_date,
+        selected_station=selected_station,
+        station_name=station_name,
+        guide_items=guide_items,
+        message=message,
+        message_type=message_type
+    )
+
+@app.route('/api/record-single', methods=['POST'])
+def api_record_single():
+    """単一番組の即時録音実行API"""
+    station = request.form.get('station', '').strip()
+    date_str = request.form.get('date', '').strip()
+    start = request.form.get('start', '').strip()
+    duration = request.form.get('duration', '').strip()
+    title = request.form.get('title', '').strip()
+    personality = request.form.get('personality', '').strip()
+    
+    if not station or not date_str or not start or not title:
+        return jsonify({'success': False, 'message': '必須パラメータが不足しています。'})
+        
+    script_path = os.path.join(BASE_DIR, 'scripts', 'record_single_program.py')
+    cmd = [sys.executable, script_path, '--station', station, '--date', date_str, '--start', start, '--duration', duration, '--title', title, '--personality', personality]
+    
+    try:
+        subprocess.Popen(cmd, cwd=BASE_DIR)
+        return jsonify({'success': True, 'message': f"番組「{title}」の録音処理をバックグラウンドで開始しました。"})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f"録音処理の起動に失敗しました: {e}"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)

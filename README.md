@@ -37,9 +37,9 @@ koeradi-archive/
 │   ├── sync_drive.sh         # rcloneを使用してGoogle Driveへ同期するスクリプト
 │   └── vendor/               # 外部オープンソーススクリプト配置先
 │       └── rec_radiko_ts.sh     # radikoタイムフリー取得スクリプト
-├── web_admin/                # Web管理画面アプリケーション (Day15追加)
-│   ├── app.py                # Flaskアプリケーション本体
-│   ├── templates/            # HTMLテンプレート (index.html)
+├── web_admin/                # Web管理画面アプリケーション (Day15/Day17更新)
+│   ├── app.py                # Flaskアプリケーション本体 (録音一覧・配信エンドポイント追加)
+│   ├── templates/            # HTMLテンプレート (dashboard.html, rules.html, stations.html, recordings.html)
 │   └── static/               # CSSスタイルシート (style.css)
 └── logs/                     # ログファイル保存用フォルダ
 ```
@@ -65,7 +65,8 @@ koeradi-archive/
 - **Day13**: 複数放送局設定ファイル (`config/stations.yaml`) の導入と `run_yesterday_all.sh` のマルチステーション対応。
 - **Day14**: キーワード検索・あいまい検索フィルタリング機能 (`config/recording_rules.yaml` / `filter_programs.py`) の導入と録音の絞り込み機能 (`run_yesterday_all.sh --filtered`) の追加。
 - **Day15**: ブラウザからキーワード録音ルールの確認・追加・有効化/無効化・削除および filtered dry-run の実行ができる Web管理画面 (`web_admin/app.py`) を実装。
-- **Day16**: サーバーの運用状況（HDD使用率、Google Drive同期状態、録音済み件数、キーワード数、本日の録音予定番組、最新録音履歴）がひと目で確認できる運用ダッシュボードを構築。
+- **Day16**: サーバーの運用状況（HDD使用率、Google Drive同期状態、録音済み件数、キーワード数、本日の録音予定番組、最新録音履歴）がひと目で確認できる運用ダッシュボードを構築。録音フォルダおよび Google Drive の保存構造を `局名/YYYY/MM/YYYY-MM-DD_番組名.m4a` へ最適化。
+- **Day17**: Web管理画面に録音一覧ページ (`/recordings`) および手動録音実行ページ (`/manual-recording`) を追加。ブラウザ上での HTML5 オーディオ直接再生、リアルタイム検索・フィルタリング、バックグラウンドでの非同期録音ジョブ実行（Preview機能・ログ表示機能含む）、および Path Traversal 対策セキュリティ音声配信エンドポイント (`/audio/...`) を構築。
 
 ## ストレージ構成 (Day11/Day12)
 データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
