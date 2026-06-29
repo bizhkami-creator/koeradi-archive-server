@@ -1,12 +1,13 @@
 rules:
-  - name: オードリー
-    keyword: オードリー
-    enabled: true
-
-  - name: 伊集院光
-    keyword: 伊集院光
-    enabled: true
-
-  - name: テスト用 ラジオショー
-    keyword: ラジオショー
-    enabled: false
+- name: オードリー
+  keyword: オードリー
+  enabled: true
+- name: 伊集院光
+  keyword: 伊集院光
+  enabled: true
+- name: テスト用 ラジオショー
+  keyword: ラジオショー
+  enabled: false
+- name: 佐久間
+  keyword: 佐久間
+  enabled: true

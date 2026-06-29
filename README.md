@@ -37,6 +37,10 @@ koeradi-archive/
 │   ├── sync_drive.sh         # rcloneを使用してGoogle Driveへ同期するスクリプト
 │   └── vendor/               # 外部オープンソーススクリプト配置先
 │       └── rec_radiko_ts.sh     # radikoタイムフリー取得スクリプト
+├── web_admin/                # Web管理画面アプリケーション (Day15追加)
+│   ├── app.py                # Flaskアプリケーション本体
+│   ├── templates/            # HTMLテンプレート (index.html)
+│   └── static/               # CSSスタイルシート (style.css)
 └── logs/                     # ログファイル保存用フォルダ
 ```
 
@@ -60,6 +64,7 @@ koeradi-archive/
 - **Day12**: データ保存先を Raspberry Pi SDカードから外付けHDDへ完全移行。`data -> /mnt/koeradi` のシンボリックリンク構造によりコード修正なしで移行完了。
 - **Day13**: 複数放送局設定ファイル (`config/stations.yaml`) の導入と `run_yesterday_all.sh` のマルチステーション対応。
 - **Day14**: キーワード検索・あいまい検索フィルタリング機能 (`config/recording_rules.yaml` / `filter_programs.py`) の導入と録音の絞り込み機能 (`run_yesterday_all.sh --filtered`) の追加。
+- **Day15**: ブラウザからキーワード録音ルールの確認・追加・有効化/無効化・削除および filtered dry-run の実行ができる Web管理画面 (`web_admin/app.py`) を実装。
 
 ## ストレージ構成 (Day11/Day12)
 データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
@@ -152,7 +157,32 @@ bash scripts/run_daily.sh --yesterday
 bash scripts/run_daily.sh --date 2026-06-27
 ```
 
+## Web管理画面の使い方 (`web_admin/app.py`) (Day15)
+ブラウザから録音条件の確認・変更および dry-run 実行が行える簡易管理画面です。
+
+### 起動方法
+```bash
+python3 web_admin/app.py
+```
+
+### アクセスURL
+```text
+http://<RaspberryPiのIPアドレス>:8080
+```
+(ローカル確認の場合は `http://localhost:8080`)
+
+### 機能と使い方
+- **キーワードルールの確認**: 登録されている `recording_rules.yaml` の内容が一括表示されます。
+- **キーワード追加**: 「新規録音ルール追加」フォームから番組名 (name) とキーワード (keyword) を入力し、有効化チェックボックスを選択して「追加」ボタンを押すと設定ファイルが更新されます。
+- **有効/無効切り替え**: 各ルールの「有効にする」「無効にする」ボタンをクリックすることで、設定ファイルの `enabled` (true/false) を切り替えられます。
+- **削除**: 不要になったルールは「削除」ボタンで取り除くことができます。
+- **dry-run 実行**: 「filtered dry-run 実行」ボタンをクリックすると、昨日の番組表に対するキーワード抽出シミュレーションがブラウザ上で実行され、コンソールに結果が表示されます。
+
+> [!CAUTION]
+> **外部公開に関する注意事項**
+> 本Web管理画面は家庭内LAN環境での利用を前提としており、ログイン認証機能を備えていません。
+> **ポートフォワーディング等によるインターネットへの外部公開は絶対に行わないでください。**
+
 ## 今後の予定
-- Webブラウザ等によるルール管理画面の構築 (Day15)
 - cron / systemd による定期自動実行（全自動化）
 - 過去アーカイブの自動クリーンアップ機能
