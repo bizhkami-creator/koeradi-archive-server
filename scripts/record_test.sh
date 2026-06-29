@@ -54,15 +54,24 @@ else
     exit 1
 fi
 
+# station_id から station_name を取得
+STATION_NAME=$(python3 -c "
+import yaml
+with open('$PROJECT_ROOT/config/stations.yaml', 'r', encoding='utf-8') as f:
+    data = yaml.safe_load(f) or {}
+mapping = {s['station_id']: s['station_name'] for s in data.get('stations', []) if isinstance(s, dict)}
+print(mapping.get('$STATION_ID', '$STATION_ID'))
+" 2>/dev/null || echo "$STATION_ID")
+
 # 保存先ディレクトリとファイル名の構築
-OUTPUT_DIR="$PROJECT_ROOT/data/audio/$STATION_ID"
-FILE_NAME="${DATE_STR}_${STATION_ID}_${PROGRAM_NAME}.m4a"
+OUTPUT_DIR="$PROJECT_ROOT/data/audio/$STATION_NAME/$YEAR/$MONTH"
+FILE_NAME="${DATE_STR}_${PROGRAM_NAME}.m4a"
 OUTPUT_FILE="$OUTPUT_DIR/$FILE_NAME"
 
 mkdir -p "$OUTPUT_DIR"
 
 log "=== 録音テスト開始 ==="
-log "放送局ID: $STATION_ID"
+log "放送局: $STATION_NAME ($STATION_ID)"
 log "開始日時: $START_DATETIME ($DATE_STR)"
 log "録音時間: ${DURATION_MINUTES}分"
 log "番組名: $PROGRAM_NAME"

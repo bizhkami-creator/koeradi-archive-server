@@ -47,6 +47,19 @@ def load_config():
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+def load_station_map():
+    """stations.yaml から station_id -> station_name のマッピングを取得"""
+    stations_path = PROJECT_ROOT / "config" / "stations.yaml"
+    if not stations_path.exists():
+        return {}
+    with open(stations_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    mapping = {}
+    for s in data.get("stations", []):
+        if isinstance(s, dict) and "station_id" in s and "station_name" in s:
+            mapping[s["station_id"]] = s["station_name"]
+    return mapping
+
 def sanitize_filename(name: str) -> str:
     r"""
     番組名に含まれるファイル名として使えない禁忌文字やスペースを安全な文字(_)に置換します。
@@ -103,6 +116,7 @@ def main():
     log_message(f"dry-run: {args.dry_run}")
 
     config_data = load_config()
+    station_map = load_station_map()
     programs = config_data.get("programs", [])
     
     # 対象番組の抽出 (enabled == True かつ 曜日が一致)
@@ -124,6 +138,7 @@ def main():
 
     for prog in matched_programs:
         station_id = prog["station_id"]
+        station_name = station_map.get(station_id, station_id)
         raw_program_name = prog["program_name"]
         safe_program_name = sanitize_filename(raw_program_name)
         start_time = str(prog["start_time"])
@@ -131,8 +146,10 @@ def main():
         
         start_datetime = format_start_datetime(date_str, start_time)
         
-        # 保存予定パスの構築
-        rel_output_path = f"data/audio/{station_id}/{date_str}_{station_id}_{safe_program_name}.m4a"
+        # 保存予定パスの構築 (data/audio/station_name/YYYY/MM/YYYY-MM-DD_番組名.m4a)
+        year = date_str[:4]
+        month = date_str[5:7]
+        rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_program_name}.m4a"
         abs_output_path = PROJECT_ROOT / rel_output_path
         
         file_exists = abs_output_path.exists()
@@ -141,12 +158,13 @@ def main():
         if args.dry_run:
             print("\nWould record:")
             print(f"station_id: {station_id}")
+            print(f"station_name: {station_name}")
             print(f"program_name: {raw_program_name}")
             print(f"start_datetime: {start_datetime}")
             print(f"duration_minutes: {duration}")
             print(f"output_path: {rel_output_path}")
             print(f"status: {status}\n")
-            log_message(f"[DRY-RUN] 対象番組: {station_id} / {raw_program_name} | パス: {rel_output_path} | ステータス: {status}")
+            log_message(f"[DRY-RUN] 対象番組: {station_id}({station_name}) / {raw_program_name} | パス: {rel_output_path} | ステータス: {status}")
         else:
             log_message(f"保存予定パス: {rel_output_path}")
             if file_exists:

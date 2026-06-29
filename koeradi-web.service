@@ -1,0 +1,16 @@
+[Unit]
+Description=Koeradi Archive Web Admin Service
+After=network.target
+
+[Service]
+Type=simple
+User=yocchan
+WorkingDirectory=/home/yocchan/koeradi-archive
+ExecStart=/usr/bin/python3 /home/yocchan/koeradi-archive/web_admin/app.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

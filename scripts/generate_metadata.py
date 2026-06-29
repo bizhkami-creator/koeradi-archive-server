@@ -10,6 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
+import yaml
 
 # 対象とする音声ファイルの拡張子
 TARGET_EXTENSIONS = {'.m4a', '.mp3', '.aac'}
@@ -17,74 +18,113 @@ TARGET_EXTENSIONS = {'.m4a', '.mp3', '.aac'}
 # 日付フォーマットの判定用正規表現 (YYYY-MM-DD)
 DATE_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
-def parse_filename(file_name: str):
+def load_stations_info(base_dir: Path):
     """
-    ファイル名から日付、放送局ID、番組名を抽出します。
-    想定フォーマット: YYYY-MM-DD_STATION_PROGRAM.ext
+    stations.yaml を読み込み、
+    station_id <-> station_name の相互マッピング辞書を返します。
+    """
+    stations_file = base_dir / "config" / "stations.yaml"
+    id_to_name = {}
+    name_to_id = {}
+    if stations_file.exists():
+        try:
+            with open(stations_file, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f) or {}
+                for s in data.get('stations', []):
+                    if isinstance(s, dict) and 'station_id' in s and 'station_name' in s:
+                        st_id = s['station_id']
+                        st_name = s['station_name']
+                        id_to_name[st_id] = st_name
+                        name_to_id[st_name] = st_id
+        except Exception as e:
+            print(f"警告: stations.yaml の読み込み失敗: {e}")
+    return id_to_name, name_to_id
+
+def parse_audio_file(path: Path, audio_dir: Path, id_to_name: dict, name_to_id: dict):
+    """
+    ファイルパスおよびファイル名からメタデータ要素を構築します。
+    新フォーマット: YYYY-MM-DD_番組名.m4a
+    新ディレクトリ: data/audio/{station_name}/{YYYY}/{MM}/{file_name}
+    """
+    file_name = path.name
+    rel_parts = path.relative_to(audio_dir).parts
+    relative_path = f"audio/{path.relative_to(audio_dir).as_posix()}"
     
-    フォーマットに合致しない場合は、エラーにせず unknown として処理します。
-    """
-    # 拡張子を除いたベース名を取得
     stem, _ = os.path.splitext(file_name)
     
-    # アンダースコアで最大3つの要素に分割 (日付, 放送局ID, 番組名)
-    parts = stem.split('_', 2)
+    # 局名・局IDの判定
+    station_name = "unknown"
+    station_id = "unknown"
     
-    if len(parts) == 3 and DATE_PATTERN.match(parts[0]):
-        return {
-            "date": parts[0],
-            "station_id": parts[1],
-            "program_name": parts[2]
-        }
+    if len(rel_parts) > 0:
+        top_dir = rel_parts[0]
+        if top_dir in name_to_id:
+            station_name = top_dir
+            station_id = name_to_id[top_dir]
+        elif top_dir in id_to_name:
+            station_id = top_dir
+            station_name = id_to_name[top_dir]
+        else:
+            station_name = top_dir
+
+    # ファイル名の解析 (YYYY-MM-DD_番組名 または 旧: YYYY-MM-DD_STATION_番組名)
+    date_str = "unknown"
+    year_str = "unknown"
+    month_str = "unknown"
+    program_name = "unknown"
+    
+    parts = stem.split('_', 2)
+    if len(parts) >= 2 and DATE_PATTERN.match(parts[0]):
+        date_str = parts[0]
+        year_str = date_str[:4]
+        month_str = date_str[5:7]
+        
+        if len(parts) == 3 and (parts[1] in id_to_name or parts[1] == station_id):
+            # 旧フォーマット: YYYY-MM-DD_STATION_番組名
+            if station_id == "unknown":
+                station_id = parts[1]
+                station_name = id_to_name.get(station_id, station_id)
+            program_name = parts[2]
+        else:
+            # 新フォーマット: YYYY-MM-DD_番組名 (stem.split('_', 1) 相当)
+            program_name = stem[len(date_str) + 1:]
     else:
-        # フォーマットに合わない場合は unknown とする
-        return {
-            "date": "unknown",
-            "station_id": "unknown",
-            "program_name": "unknown"
-        }
+        program_name = stem
+
+    return {
+        "file_name": file_name,
+        "station_id": station_id,
+        "station_name": station_name,
+        "program_name": program_name,
+        "date": date_str,
+        "year": year_str,
+        "month": month_str,
+        "relative_path": relative_path
+    }
 
 def generate_metadata():
-    # スクリプトの配置場所からプロジェクトのルートディレクトリを取得
     script_dir = Path(__file__).resolve().parent
     base_dir = script_dir.parent
     
     audio_dir = base_dir / "data" / "audio"
     output_file = base_dir / "data" / "metadata" / "metadata.json"
     
+    id_to_name, name_to_id = load_stations_info(base_dir)
+    
     metadata_list = []
     
-    # data/audio ディレクトリが存在するか確認
     if not audio_dir.exists():
         print(f"警告: 音声ディレクトリが存在しません: {audio_dir}")
         return
 
-    # ディレクトリ内を再帰的に走査
-    # sortedでソートしておくことで出力順序を安定させます
     for path in sorted(audio_dir.rglob('*')):
         if path.is_file() and path.suffix.lower() in TARGET_EXTENSIONS:
-            file_name = path.name
-            # data/audio からの相対パスを取得 (POSIX形式のファイルパス文字列にする)
-            relative_path = str(path.relative_to(audio_dir).as_posix())
-            
-            # ファイル名の解析
-            info = parse_filename(file_name)
-            
-            # メタデータ要素の構築
-            item = {
-                "file_name": file_name,
-                "station_id": info["station_id"],
-                "program_name": info["program_name"],
-                "date": info["date"],
-                "relative_path": relative_path
-            }
+            item = parse_audio_file(path, audio_dir, id_to_name, name_to_id)
             metadata_list.append(item)
-            print(f"検出: {relative_path}")
+            print(f"検出: {item['relative_path']}")
 
-    # 出力先ディレクトリを作成（存在しない場合）
     output_file.parent.mkdir(parents=True, exist_ok=True)
     
-    # JSONファイルへ書き出し
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(metadata_list, f, ensure_ascii=False, indent=2)
         

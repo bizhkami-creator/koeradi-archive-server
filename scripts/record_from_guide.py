@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import yaml
 
 # プロジェクトのルートディレクトリおよび関連パスの取得
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -31,6 +32,20 @@ FETCH_SCRIPT = SCRIPT_DIR / "fetch_program_guide.py"
 FILTER_SCRIPT = SCRIPT_DIR / "filter_programs.py"
 PROGRAM_GUIDES_DIR = PROJECT_ROOT / "data" / "program_guides"
 FILTERED_PROGRAMS_DIR = PROJECT_ROOT / "data" / "filtered_programs"
+
+
+def load_station_map():
+    """stations.yaml から station_id -> station_name のマッピングを取得"""
+    stations_path = PROJECT_ROOT / "config" / "stations.yaml"
+    if not stations_path.exists():
+        return {}
+    with open(stations_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    mapping = {}
+    for s in data.get("stations", []):
+        if isinstance(s, dict) and "station_id" in s and "station_name" in s:
+            mapping[s["station_id"]] = s["station_name"]
+    return mapping
 
 
 def log_message(msg: str):
@@ -81,8 +96,13 @@ def main():
         log_message(f"[ERROR] 日付フォーマットが不正です。YYYY-MM-DD 形式で指定してください: {date_str}")
         sys.exit(1)
 
+    station_map = load_station_map()
+    station_name = station_map.get(station_id, station_id)
+    year = date_str[:4]
+    month = date_str[5:7]
+
     log_message("=== record_from_guide.py 実行開始 ===")
-    log_message(f"対象局: {station_id}")
+    log_message(f"対象局: {station_id} ({station_name})")
     log_message(f"対象日: {date_str}")
     log_message(f"dry-run: {args.dry_run}")
     log_message(f"filtered-only: {args.filtered_only}")
@@ -150,7 +170,7 @@ def main():
 
     # 3. dry-run処理または本番録音処理
     if args.dry_run:
-        print(f"\nTarget station: {station_id}")
+        print(f"\nTarget station: {station_id} ({station_name})")
         print(f"Target date: {date_str}")
         print(f"Programs: {target_count}\n")
         print("Would record:")
@@ -162,7 +182,7 @@ def main():
             duration = str(prog.get("duration_minutes", 0))
             start_datetime = parse_start_datetime(start_iso)
 
-            rel_output_path = f"data/audio/{station_id}/{date_str}_{station_id}_{safe_title}.m4a"
+            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
             status = "already_exists_skip" if abs_output_path.exists() else "will_record"
 
@@ -186,7 +206,7 @@ def main():
             duration = str(prog.get("duration_minutes", 0))
             start_datetime = parse_start_datetime(start_iso)
 
-            rel_output_path = f"data/audio/{station_id}/{date_str}_{station_id}_{safe_title}.m4a"
+            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_title}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
 
             log_message(f"[{idx}/{target_count}] 処理中: {raw_title}")

@@ -44,6 +44,19 @@ def load_config():
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+def load_station_map():
+    """stations.yaml から station_id -> station_name のマッピングを取得"""
+    stations_path = PROJECT_ROOT / "config" / "stations.yaml"
+    if not stations_path.exists():
+        return {}
+    with open(stations_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    mapping = {}
+    for s in data.get("stations", []):
+        if isinstance(s, dict) and "station_id" in s and "station_name" in s:
+            mapping[s["station_id"]] = s["station_name"]
+    return mapping
+
 def sanitize_filename(name: str) -> str:
     r"""
     番組名に含まれるファイル名として使えない禁忌文字やスペースを安全な文字(_)に置換します。
@@ -76,8 +89,11 @@ def main():
 
     day_of_week = target_date.strftime("%A")  # 例: "Saturday", "Sunday"
     
+    station_map = load_station_map()
+    station_name = station_map.get(station_id_target, station_id_target)
+
     log_message("=== record_station_day.py 実行開始 ===")
-    log_message(f"対象局: {station_id_target}")
+    log_message(f"対象局: {station_id_target} ({station_name})")
     log_message(f"対象日: {date_str}")
     log_message(f"対象曜日: {day_of_week}")
     log_message(f"dry-run: {args.dry_run}")
@@ -97,8 +113,11 @@ def main():
 
     log_message(f"対象番組数: {len(matched_programs)} 件")
 
+    year = date_str[:4]
+    month = date_str[5:7]
+
     if args.dry_run:
-        print(f"\nTarget station: {station_id_target}")
+        print(f"\nTarget station: {station_id_target} ({station_name})")
         print(f"Target date: {date_str}")
         print(f"Target weekday: {day_of_week}")
         print(f"Target programs: {len(matched_programs)}\n")
@@ -114,7 +133,7 @@ def main():
                 duration = str(prog["duration_minutes"])
                 start_datetime = format_start_datetime(date_str, start_time)
                 
-                rel_output_path = f"data/audio/{station_id_target}/{date_str}_{station_id_target}_{safe_prog_name}.m4a"
+                rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_prog_name}.m4a"
                 abs_output_path = PROJECT_ROOT / rel_output_path
                 file_exists = abs_output_path.exists()
                 status = "already_exists_skip" if file_exists else "will_record"
@@ -137,7 +156,7 @@ def main():
             duration = str(prog["duration_minutes"])
             start_datetime = format_start_datetime(date_str, start_time)
             
-            rel_output_path = f"data/audio/{station_id_target}/{date_str}_{station_id_target}_{safe_prog_name}.m4a"
+            rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{safe_prog_name}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
             
             log_message(f"保存予定パス: {rel_output_path}")

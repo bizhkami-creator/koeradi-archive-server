@@ -15,7 +15,7 @@ koeradi-archive/
 │   ├── stations.yaml         # 一括録音対象放送局の設定ファイル (Day13追加)
 │   └── recording_rules.yaml  # キーワード録音ルール設定ファイル (Day14追加)
 ├── data/
-│   ├── audio/                # 音声ファイルの保存先 (KoeRadi 命名規則で保存)
+│   ├── audio/                # 音声ファイルの保存先 (data/audio/{放送局名}/{YYYY}/{MM}/{YYYY-MM-DD}_{番組名}.m4a)
 │   │   └── sample/           # サンプル音声配置フォルダ
 │   ├── metadata/             # 生成されたメタデータ(metadata.json)の保存先
 │   ├── program_guides/       # 取得したradiko番組表JSONの保存先
