@@ -5,9 +5,6 @@ rules:
 - name: 佐久間
   keyword: 佐久間
   enabled: true
-- name: 辛坊
-  keyword: 辛坊
-  enabled: true
 - name: さまぁ～ず
   keyword: さまぁ～ず
   enabled: true
