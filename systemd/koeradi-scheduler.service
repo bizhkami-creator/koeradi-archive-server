@@ -1,0 +1,13 @@
+[Unit]
+Description=KoeRadi Archive Scheduler Job
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/koeradi
+
+[Service]
+Type=oneshot
+User=yocchan
+WorkingDirectory=/home/yocchan/koeradi-archive
+ExecStart=/usr/bin/python3 /home/yocchan/koeradi-archive/scripts/scheduled_recording.py
+StandardOutput=journal
+StandardError=journal

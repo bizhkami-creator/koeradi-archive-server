@@ -1,0 +1,10 @@
+[Unit]
+Description=Run KoeRadi Archive Scheduler periodically
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=koeradi-scheduler.service
+
+[Install]
+WantedBy=timers.target

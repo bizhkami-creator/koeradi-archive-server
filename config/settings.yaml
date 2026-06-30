@@ -1,8 +1,9 @@
 drive:
-  enabled: true
-scheduler:
   enabled: false
+scheduler:
+  enabled: true
   mode: filtered
   interval: daily
   hour: 3
   minute: 0
+  lookback_days: 7

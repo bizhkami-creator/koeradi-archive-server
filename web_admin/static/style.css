@@ -504,6 +504,45 @@ select {
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 
+.bulk-actions,
+.delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 20px;
+}
+
+.select-all-label,
+.drive-delete-label,
+.recording-select-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.recording-select-row {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.recording-checkbox,
+#select-all-recordings,
+#delete-drive {
+  width: 18px;
+  height: 18px;
+}
+
+.personality-row {
+  color: #475569;
+  font-size: 0.9rem;
+  margin: -4px 0 10px 0;
+  font-weight: 600;
+}
+
 .card-header-row {
   display: flex;
   justify-content: space-between;

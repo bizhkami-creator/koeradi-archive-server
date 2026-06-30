@@ -81,6 +81,18 @@
                     <div class="stat-sub">有効 {{ keywords_summary.enabled }}件 / 無効 {{ keywords_summary.disabled }}件</div>
                 </div>
             </div>
+            <div class="grid-4" style="margin-top: 16px;">
+                <div class="stat-card">
+                    <div class="stat-title">ゴミ箱件数</div>
+                    <div class="stat-main">{{ trash_stats.count }}<span class="stat-unit">件</span></div>
+                    <div class="stat-sub">保存先: data/trash/</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">ゴミ箱容量</div>
+                    <div class="stat-main">{{ trash_stats.size }}</div>
+                    <div class="stat-sub">30日後削除は未実装</div>
+                </div>
+            </div>
         </section>
 
         <!-- ■ 運用設定 -->
@@ -104,6 +116,13 @@
                     </span>
                     <span>Mode: <strong>{{ settings.scheduler.mode }}</strong></span>
                     <span>Interval: <strong>{{ settings.scheduler.interval }}</strong></span>
+                    <span>録音対象期間: <strong>
+                        {% if settings.scheduler.lookback_days == 1 %}
+                        昨日のみ
+                        {% else %}
+                        過去{{ settings.scheduler.lookback_days }}日
+                        {% endif %}
+                    </strong></span>
                     <span>Next planned time: <strong>Day18では未設定</strong></span>
                 </div>
             </div>

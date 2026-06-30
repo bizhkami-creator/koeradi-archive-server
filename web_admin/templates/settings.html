@@ -35,6 +35,7 @@
                 <input type="hidden" name="scheduler_interval" value="{{ settings.scheduler.interval }}">
                 <input type="hidden" name="scheduler_hour" value="{{ settings.scheduler.hour }}">
                 <input type="hidden" name="scheduler_minute" value="{{ settings.scheduler.minute }}">
+                <input type="hidden" name="scheduler_lookback_days" value="{{ settings.scheduler.lookback_days }}">
                 {% if settings.scheduler.enabled %}
                 <input type="hidden" name="scheduler_enabled" value="on">
                 {% endif %}
@@ -87,7 +88,7 @@
                 <div class="settings-row">
                     <div>
                         <div class="settings-label">Scheduler</div>
-                        <div class="settings-help">Day18では設定ファイル管理のみです。cron / systemd timer は更新しません。</div>
+                        <div class="settings-help">systemd timer から scheduled_recording.py を起動します。interval/hour/minute は設定ファイルに保存されます。</div>
                     </div>
                     <label class="switch-label">
                         <input type="checkbox" name="scheduler_enabled" {% if settings.scheduler.enabled %}checked{% endif %}>
@@ -124,12 +125,46 @@
                         <label for="scheduler_minute">minute</label>
                         <input type="number" id="scheduler_minute" name="scheduler_minute" min="0" max="59" value="{{ settings.scheduler.minute }}" class="form-control">
                     </div>
+
+                    <div class="form-group">
+                        <label for="scheduler_lookback_days">録音対象期間</label>
+                        <select id="scheduler_lookback_days" name="scheduler_lookback_days" class="form-control">
+                            <option value="1" {% if settings.scheduler.lookback_days == 1 %}selected{% endif %}>昨日のみ</option>
+                            <option value="3" {% if settings.scheduler.lookback_days == 3 %}selected{% endif %}>過去3日</option>
+                            <option value="7" {% if settings.scheduler.lookback_days == 7 %}selected{% endif %}>過去7日</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="form-buttons">
                     <button type="submit" class="btn btn-primary">Scheduler設定を保存</button>
                 </div>
             </form>
+
+            <div class="job-status-box">
+                <h3>Scheduler systemd status</h3>
+                <div class="settings-summary">
+                    <span>Scheduler service status:
+                        {% if scheduler_status.service_ok %}
+                        <span class="badge badge-success">{{ scheduler_status.service_status }}</span>
+                        {% else %}
+                        <span class="badge badge-secondary">{{ scheduler_status.service_status }}</span>
+                        {% endif %}
+                    </span>
+                    <span>Timer status:
+                        {% if scheduler_status.timer_ok %}
+                        <span class="badge badge-success">{{ scheduler_status.timer_status }}</span>
+                        {% else %}
+                        <span class="badge badge-secondary">{{ scheduler_status.timer_status }}</span>
+                        {% endif %}
+                    </span>
+                    <span>Next run time: <strong>{{ scheduler_status.next_run_time }}</strong></span>
+                </div>
+                <div class="settings-command">Timer detail:</div>
+                <pre class="console-box">{{ scheduler_status.timer_list }}</pre>
+                <div class="settings-command">Last run log:</div>
+                <pre class="console-box">{{ scheduler_status.last_run_log }}</pre>
+            </div>
         </div>
 
         <div class="card">
@@ -137,15 +172,23 @@
             <div class="test-actions">
                 <form action="{{ url_for('settings_page') }}" method="POST">
                     <input type="hidden" name="action" value="dry_run_yesterday">
-                    <button type="submit" class="btn btn-secondary">昨日分Dry Run</button>
+                    <button type="submit" class="btn btn-secondary">対象期間Dry Run</button>
                 </form>
-                <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('昨日分録音をバックグラウンドで開始します。よろしいですか？');">
+                <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('対象期間の録音をバックグラウンドで開始します。よろしいですか？');">
                     <input type="hidden" name="action" value="record_yesterday">
-                    <button type="submit" class="btn btn-primary" style="background-color: #ef4444;">昨日分録音</button>
+                    <button type="submit" class="btn btn-primary" style="background-color: #ef4444;">対象期間録音</button>
                 </form>
                 <form action="{{ url_for('settings_page') }}" method="POST">
                     <input type="hidden" name="action" value="sync_now">
                     <button type="submit" class="btn btn-primary">今すぐ同期</button>
+                </form>
+                <form action="{{ url_for('settings_page') }}" method="POST">
+                    <input type="hidden" name="action" value="scheduler_dry_run">
+                    <button type="submit" class="btn btn-secondary">Scheduler dry-run</button>
+                </form>
+                <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('Schedulerを今すぐ実行します。scheduler.enabled が true の場合は録音ジョブが開始されます。よろしいですか？');">
+                    <input type="hidden" name="action" value="scheduler_run_now">
+                    <button type="submit" class="btn btn-primary" style="background-color: #0f766e;">Run scheduler now</button>
                 </form>
             </div>
             {% if not settings.drive.enabled %}

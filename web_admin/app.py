@@ -20,6 +20,7 @@ SETTINGS_FILE = os.path.join(BASE_DIR, 'config', 'settings.yaml')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
+DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
 
 DEFAULT_SETTINGS = {
     'drive': {
@@ -30,28 +31,40 @@ DEFAULT_SETTINGS = {
         'mode': 'filtered',
         'interval': 'daily',
         'hour': 3,
-        'minute': 0
+        'minute': 0,
+        'lookback_days': 7
     }
 }
 
 VALID_SCHEDULER_MODES = {'filtered', 'full'}
 VALID_SCHEDULER_INTERVALS = {'hourly', 'every_6_hours', 'daily', 'weekly'}
+VALID_LOOKBACK_DAYS = {1, 3, 7}
 
 JOB_COMMANDS = {
     'dry_run_yesterday': {
-        'label': '昨日分Dry Run',
-        'command': ['bash', 'scripts/run_yesterday_all.sh', '--filtered', '--dry-run'],
+        'label': '対象期間Dry Run',
+        'command': ['python3', 'scripts/scheduled_recording.py', '--dry-run', '--force'],
         'requires_drive': False,
     },
     'record_yesterday': {
-        'label': '昨日分録音',
-        'command': ['bash', 'scripts/run_yesterday_all.sh', '--filtered'],
+        'label': '対象期間録音',
+        'command': ['python3', 'scripts/scheduled_recording.py', '--force'],
         'requires_drive': False,
     },
     'sync_now': {
         'label': '今すぐ同期',
         'command': ['bash', 'scripts/sync_drive.sh'],
         'requires_drive': True,
+    },
+    'scheduler_dry_run': {
+        'label': 'Scheduler dry-run',
+        'command': ['python3', 'scripts/scheduled_recording.py', '--dry-run'],
+        'requires_drive': False,
+    },
+    'scheduler_run_now': {
+        'label': 'Run scheduler now',
+        'command': ['python3', 'scripts/scheduled_recording.py'],
+        'requires_drive': False,
     },
 }
 
@@ -81,6 +94,13 @@ def merge_settings(raw):
         minute = DEFAULT_SETTINGS['scheduler']['minute']
     minute = min(max(minute, 0), 59)
 
+    try:
+        lookback_days = int(scheduler.get('lookback_days', DEFAULT_SETTINGS['scheduler']['lookback_days']))
+    except (TypeError, ValueError):
+        lookback_days = DEFAULT_SETTINGS['scheduler']['lookback_days']
+    if lookback_days not in VALID_LOOKBACK_DAYS:
+        lookback_days = DEFAULT_SETTINGS['scheduler']['lookback_days']
+
     return {
         'drive': {
             'enabled': bool(drive.get('enabled', DEFAULT_SETTINGS['drive']['enabled']))
@@ -91,6 +111,7 @@ def merge_settings(raw):
             'interval': interval,
             'hour': hour,
             'minute': minute,
+            'lookback_days': lookback_days,
         }
     }
 
@@ -204,7 +225,14 @@ def get_gdrive_sync_status():
         pass
     return {'last_sync': last_sync, 'status': status}
 
-def append_settings_job_event(job_name, command, drive_enabled, status, message, exit_code=None):
+def build_scheduler_target_dates(lookback_days):
+    today = datetime.date.today()
+    return [
+        (today - datetime.timedelta(days=offset)).strftime('%Y-%m-%d')
+        for offset in range(1, lookback_days + 1)
+    ]
+
+def append_settings_job_event(job_name, command, drive_enabled, status, message, exit_code=None, extra=None):
     """Settingsジョブの状態をJSON Linesで記録する"""
     os.makedirs(LOGS_DIR, exist_ok=True)
     event = {
@@ -216,6 +244,8 @@ def append_settings_job_event(job_name, command, drive_enabled, status, message,
         'message': message,
         'exit_code': exit_code,
     }
+    if extra:
+        event.update(extra)
     with open(SETTINGS_JOBS_LOG, 'a', encoding='utf-8') as f:
         f.write(json.dumps(event, ensure_ascii=False) + '\n')
 
@@ -273,6 +303,69 @@ def get_settings_job_status(max_lines=80):
     latest_event['log_tail'] = ''.join(lines[-max_lines:])
     return latest_event
 
+def run_status_command(cmd, timeout=5):
+    """systemctl系の状態取得を安全に実行する"""
+    try:
+        res = subprocess.run(
+            cmd,
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        output = (res.stdout or res.stderr or '').strip()
+        return {
+            'ok': res.returncode == 0,
+            'returncode': res.returncode,
+            'output': output if output else '-'
+        }
+    except Exception as e:
+        return {
+            'ok': False,
+            'returncode': None,
+            'output': f'取得できません: {e}'
+        }
+
+def get_scheduler_log_tail(max_lines=50):
+    """scheduler.log の末尾を取得する"""
+    log_path = os.path.join(LOGS_DIR, 'scheduler.log')
+    if not os.path.exists(log_path):
+        return 'logs/scheduler.log はまだ存在しません。'
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return ''.join(f.readlines()[-max_lines:])
+    except Exception as e:
+        return f'ログ読み込みエラー: {e}'
+
+def get_scheduler_systemd_status():
+    """Settings画面用に systemd timer/service 状態を取得する"""
+    timer_active = run_status_command(['systemctl', 'is-active', 'koeradi-scheduler.timer'])
+    service_active = run_status_command(['systemctl', 'is-active', 'koeradi-scheduler.service'])
+    timers = run_status_command(['systemctl', 'list-timers', '--all', 'koeradi-scheduler.timer', '--no-pager'])
+
+    next_run = '-'
+    if timers['output'] and timers['output'] != '-':
+        for line in timers['output'].splitlines():
+            if 'koeradi-scheduler.timer' in line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    next_run = ' '.join(parts[:4])
+                elif len(parts) >= 2:
+                    next_run = ' '.join(parts[:2])
+                else:
+                    next_run = line
+                break
+
+    return {
+        'timer_status': timer_active['output'],
+        'timer_ok': timer_active['ok'],
+        'service_status': service_active['output'],
+        'service_ok': service_active['ok'],
+        'next_run_time': next_run,
+        'timer_list': timers['output'],
+        'last_run_log': get_scheduler_log_tail(50),
+    }
+
 def start_settings_job(job_key):
     """Settings画面からのジョブをバックグラウンド起動する"""
     settings = load_settings()
@@ -282,10 +375,17 @@ def start_settings_job(job_key):
 
     drive_enabled = settings['drive']['enabled']
     command_text = ' '.join(job['command'])
+    scheduler_extra = None
+    if 'scheduled_recording.py' in command_text:
+        lookback_days = settings['scheduler']['lookback_days']
+        scheduler_extra = {
+            'lookback_days': lookback_days,
+            'target_dates': build_scheduler_target_dates(lookback_days),
+        }
 
     if job.get('requires_drive') and not drive_enabled:
         msg = 'Google Drive同期は無効です。'
-        append_settings_job_event(job['label'], command_text, drive_enabled, 'disabled', msg)
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'disabled', msg, extra=scheduler_extra)
         return False, msg
 
     runner_script = os.path.join(BASE_DIR, 'scripts', 'run_settings_job.py')
@@ -301,10 +401,10 @@ def start_settings_job(job_key):
 
     try:
         subprocess.Popen(cmd, cwd=BASE_DIR)
-        append_settings_job_event(job['label'], command_text, drive_enabled, 'running', f"Job started: {job['label']}")
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'running', f"Job started: {job['label']}", extra=scheduler_extra)
         return True, f"Job started: {job['label']}"
     except Exception as e:
-        append_settings_job_event(job['label'], command_text, drive_enabled, 'failed', f"起動失敗: {e}", 1)
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'failed', f"起動失敗: {e}", 1, extra=scheduler_extra)
         return False, f"ジョブの起動に失敗しました: {e}"
 
 def get_recorded_count():
@@ -318,6 +418,24 @@ def get_recorded_count():
             if file.endswith(('.m4a', '.mp3', '.wav', '.aac')):
                 count += 1
     return count
+
+def get_trash_stats():
+    """data/trash 配下の容量とファイル件数を取得する"""
+    trash_dir = os.path.join(DATA_DIR, 'trash')
+    if not os.path.exists(trash_dir):
+        return {'count': 0, 'size_bytes': 0, 'size': format_size(0)}
+
+    count = 0
+    size_bytes = 0
+    for root, dirs, files in os.walk(trash_dir):
+        for file in files:
+            path = os.path.join(root, file)
+            try:
+                size_bytes += os.path.getsize(path)
+                count += 1
+            except OSError:
+                pass
+    return {'count': count, 'size_bytes': size_bytes, 'size': format_size(size_bytes)}
 
 def get_keywords_summary():
     """登録キーワードの有効/無効/合計件数を取得"""
@@ -411,6 +529,119 @@ def get_recent_recordings(limit=20):
     except Exception:
         return []
 
+def log_delete_recordings(event):
+    """録音削除操作ログをJSON Linesで記録する"""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    payload = {
+        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        **event,
+    }
+    with open(DELETE_RECORDINGS_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + '\n')
+
+def resolve_audio_relative_path(relative_path):
+    """metadata由来の relative_path が data/audio 配下の実ファイルか検証して返す"""
+    rel = (relative_path or '').strip().replace('\\', '/')
+    if not rel or rel.startswith('/') or '..' in rel.split('/'):
+        return None, None, '不正なパスです。'
+    if not rel.startswith('audio/'):
+        return None, None, 'audio配下ではないパスです。'
+
+    audio_dir = os.path.realpath(os.path.join(DATA_DIR, 'audio'))
+    abs_path = os.path.realpath(os.path.join(DATA_DIR, rel))
+    if not abs_path.startswith(audio_dir + os.sep):
+        return None, None, 'audio配下ではないパスです。'
+    if not os.path.exists(abs_path) or os.path.isdir(abs_path):
+        return rel, abs_path, 'ファイルが存在しません。'
+    return rel, abs_path, None
+
+def delete_remote_recording(relative_path):
+    """Google Drive側の対象ファイルを削除する"""
+    remote_path = f"koeradi-drive:KoeRadiArchive/{relative_path}"
+    cmd = ['rclone', 'delete', remote_path]
+    res = subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, text=True, timeout=120)
+    output = (res.stdout or '') + (res.stderr or '')
+    return {
+        'command': ' '.join(cmd),
+        'returncode': res.returncode,
+        'output': output.strip(),
+        'success': res.returncode == 0,
+    }
+
+def regenerate_metadata():
+    """generate_metadata.py を実行して metadata.json を再生成する"""
+    gen_script = os.path.join(BASE_DIR, 'scripts', 'generate_metadata.py')
+    return subprocess.run([sys.executable, gen_script], cwd=BASE_DIR, capture_output=True, text=True, timeout=300)
+
+def move_recordings_to_trash(relative_paths, delete_drive=False):
+    """選択された録音ファイルを trash へ移動し、必要ならGoogle Drive側も削除する"""
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    trash_root = os.path.join(DATA_DIR, 'trash', timestamp)
+    os.makedirs(trash_root, exist_ok=True)
+
+    deleted = []
+    failures = []
+    drive_results = []
+
+    for raw_rel in relative_paths:
+        rel, abs_path, error = resolve_audio_relative_path(raw_rel)
+        if error:
+            failures.append({'relative_path': raw_rel, 'error': error})
+            continue
+
+        dest_path = os.path.join(trash_root, rel)
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        try:
+            shutil.move(abs_path, dest_path)
+            deleted.append({'relative_path': rel, 'trash_path': os.path.relpath(dest_path, DATA_DIR)})
+        except Exception as e:
+            failures.append({'relative_path': rel, 'error': f'trash移動失敗: {e}'})
+            continue
+
+        if delete_drive:
+            try:
+                drive_result = delete_remote_recording(rel)
+            except Exception as e:
+                drive_result = {
+                    'command': f'rclone delete koeradi-drive:KoeRadiArchive/{rel}',
+                    'returncode': None,
+                    'output': str(e),
+                    'success': False,
+                }
+            drive_result['relative_path'] = rel
+            drive_results.append(drive_result)
+            if not drive_result['success']:
+                failures.append({'relative_path': rel, 'error': f"Google Drive削除失敗: {drive_result['output']}"})
+
+    metadata_result = None
+    if deleted:
+        try:
+            res = regenerate_metadata()
+            metadata_result = {
+                'returncode': res.returncode,
+                'success': res.returncode == 0,
+                'output': ((res.stdout or '') + (res.stderr or '')).strip()[-2000:],
+            }
+            if res.returncode != 0:
+                failures.append({'relative_path': 'metadata.json', 'error': 'metadata再生成失敗'})
+        except Exception as e:
+            metadata_result = {'returncode': None, 'success': False, 'output': str(e)}
+            failures.append({'relative_path': 'metadata.json', 'error': f'metadata再生成失敗: {e}'})
+
+    event = {
+        'requested_count': len(relative_paths),
+        'deleted_count': len(deleted),
+        'deleted_files': deleted,
+        'trash_dir': os.path.relpath(trash_root, DATA_DIR),
+        'delete_drive': delete_drive,
+        'drive_results': drive_results,
+        'metadata_result': metadata_result,
+        'success': bool(deleted) and not failures,
+        'failures': failures,
+    }
+    log_delete_recordings(event)
+    return event
+
 @app.route('/')
 def dashboard():
     """トップページ: 運用状態ダッシュボード"""
@@ -418,6 +649,7 @@ def dashboard():
     hdd = get_hdd_usage()
     gdrive = get_gdrive_sync_status()
     recorded_count = get_recorded_count()
+    trash_stats = get_trash_stats()
     keywords_summary = get_keywords_summary()
     today_matched = get_today_matched_programs()
     recent_recordings = get_recent_recordings()
@@ -428,6 +660,7 @@ def dashboard():
         gdrive=gdrive,
         settings=settings,
         recorded_count=recorded_count,
+        trash_stats=trash_stats,
         keywords_summary=keywords_summary,
         today_matched=today_matched,
         recent_recordings=recent_recordings
@@ -452,6 +685,7 @@ def settings_page():
                     'interval': request.form.get('scheduler_interval', 'daily'),
                     'hour': request.form.get('scheduler_hour', 3),
                     'minute': request.form.get('scheduler_minute', 0),
+                    'lookback_days': request.form.get('scheduler_lookback_days', 7),
                 }
             }
             save_settings(settings)
@@ -468,12 +702,14 @@ def settings_page():
     settings = load_settings()
     gdrive = get_gdrive_sync_status()
     job_status = get_settings_job_status()
+    scheduler_status = get_scheduler_systemd_status()
 
     return render_template(
         'settings.html',
         settings=settings,
         gdrive=gdrive,
         job_status=job_status,
+        scheduler_status=scheduler_status,
         message=message,
         message_type=message_type,
         scheduler_modes=sorted(VALID_SCHEDULER_MODES),
@@ -584,6 +820,9 @@ def recordings_page():
     selected_station = request.args.get('station', '').strip()
     selected_date = request.args.get('date', '').strip()
     query = request.args.get('q', '').strip()
+    deleted_count = request.args.get('deleted', '').strip()
+    delete_errors = request.args.get('delete_errors', '').strip()
+    trash_dir = request.args.get('trash_dir', '').strip()
     
     meta_file = os.path.join(DATA_DIR, 'metadata', 'metadata.json')
     
@@ -608,6 +847,7 @@ def recordings_page():
                     st_id = item.get('station_id', '')
                     date_str = item.get('date', 'unknown')
                     prog_name = item.get('program_name', '')
+                    personality = item.get('personality', '')
                     file_name = item.get('file_name', '')
                     rel_path = item.get('relative_path', '')
                     
@@ -627,6 +867,7 @@ def recordings_page():
                         'station_id': st_id,
                         'station_name': st_name,
                         'program_name': prog_name,
+                        'personality': personality,
                         'date': date_str,
                         'year': item.get('year', ''),
                         'month': item.get('month', ''),
@@ -668,8 +909,29 @@ def recordings_page():
         selected_station=selected_station,
         selected_date=selected_date,
         query=query,
-        total_count=len(filtered_items)
+        total_count=len(filtered_items),
+        deleted_count=deleted_count,
+        delete_errors=delete_errors,
+        trash_dir=trash_dir
     )
+
+@app.route('/recordings/delete', methods=['POST'])
+def delete_recordings():
+    """選択された録音ファイルを data/trash へ移動し、metadataを再生成する"""
+    selected_paths = request.form.getlist('recording_paths')
+    delete_drive = request.form.get('delete_drive') == 'on'
+
+    if not selected_paths:
+        return redirect(url_for('recordings_page', delete_errors='対象が選択されていません。'))
+
+    result = move_recordings_to_trash(selected_paths, delete_drive=delete_drive)
+    args = {
+        'deleted': str(result['deleted_count']),
+        'trash_dir': result['trash_dir'],
+    }
+    if result['failures']:
+        args['delete_errors'] = f"{len(result['failures'])}件のエラーがあります。logs/delete_recordings.log を確認してください。"
+    return redirect(url_for('recordings_page', **args))
 
 @app.route('/audio/<path:filepath>')
 def serve_audio(filepath):

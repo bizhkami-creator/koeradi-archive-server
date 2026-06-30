@@ -61,34 +61,122 @@
             <span>該当件数: <strong>{{ total_count }}</strong> 件</span>
         </div>
 
+        {% if deleted_count %}
+        <div class="alert alert-success">
+            {{ deleted_count }} 件の録音ファイルを trash へ移動しました。
+            {% if trash_dir %}保存先: data/{{ trash_dir }}{% endif %}
+        </div>
+        {% endif %}
+
+        {% if delete_errors %}
+        <div class="alert alert-warning">
+            {{ delete_errors }}
+        </div>
+        {% endif %}
+
         <!-- 録音ファイル一覧 (カード形式) -->
         {% if recordings %}
-        <div class="recordings-grid">
-            {% for item in recordings %}
-            <div class="recording-card card">
-                <div class="card-header-row">
-                    <span class="badge badge-station">{{ item.station_name }}</span>
-                    <span class="recording-date">📅 {{ item.date }}</span>
-                </div>
-                <h3 class="program-title">{{ item.program_name }}</h3>
-                <div class="file-info-row">
-                    <span class="file-name" title="{{ item.file_name }}">📄 {{ item.file_name }}</span>
-                    <span class="file-size">💾 {{ item.file_size }}</span>
-                </div>
-                <div class="audio-player-wrapper">
-                    <audio controls preload="none" class="audio-player">
-                        <source src="/{{ item.relative_path }}" type="audio/mp4">
-                        お使いのブラウザは音声再生に対応していません。
-                    </audio>
-                </div>
+        <form action="{{ url_for('delete_recordings') }}" method="POST" id="delete-recordings-form">
+            <div class="bulk-actions card">
+                <label class="select-all-label">
+                    <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings(this)">
+                    全選択
+                </label>
+                <span id="selected-count">選択: 0 件</span>
             </div>
-            {% endfor %}
-        </div>
+
+            <div class="recordings-grid">
+                {% for item in recordings %}
+                <div class="recording-card card">
+                    <div class="recording-select-row">
+                        <label>
+                            <input type="checkbox" name="recording_paths" value="{{ item.relative_path }}" class="recording-checkbox" onchange="updateSelectedCount()">
+                            削除対象にする
+                        </label>
+                    </div>
+                    <div class="card-header-row">
+                        <span class="badge badge-station">{{ item.station_name }}</span>
+                        <span class="recording-date">📅 {{ item.date }}</span>
+                    </div>
+                    <h3 class="program-title">{{ item.program_name }}</h3>
+                    {% if item.personality %}
+                    <div class="personality-row">{{ item.personality }}</div>
+                    {% endif %}
+                    <div class="file-info-row">
+                        <span class="file-name" title="{{ item.file_name }}">📄 {{ item.file_name }}</span>
+                        <span class="file-size">💾 {{ item.file_size }}</span>
+                    </div>
+                    <div class="audio-player-wrapper">
+                        <audio controls preload="none" class="audio-player">
+                            <source src="/{{ item.relative_path }}" type="audio/mp4">
+                            お使いのブラウザは音声再生に対応していません。
+                        </audio>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="delete-actions card">
+                <label class="drive-delete-label">
+                    <input type="checkbox" name="delete_drive" id="delete-drive">
+                    Google Driveも削除する
+                </label>
+                <button type="submit" class="btn btn-danger">削除</button>
+                <p class="settings-help">削除対象は完全削除せず、まず data/trash/YYYY-MM-DD_HHMMSS/ へ移動します。</p>
+            </div>
+        </form>
         {% else %}
         <div class="card empty-card">
             <p>条件に一致する録音ファイルが見つかりませんでした。</p>
         </div>
         {% endif %}
     </div>
+
+    <script>
+        function getSelectedCheckboxes() {
+            return Array.from(document.querySelectorAll('.recording-checkbox:checked'));
+        }
+
+        function updateSelectedCount() {
+            const count = getSelectedCheckboxes().length;
+            const selectedCount = document.getElementById('selected-count');
+            const selectAll = document.getElementById('select-all-recordings');
+            const allBoxes = document.querySelectorAll('.recording-checkbox');
+
+            if (selectedCount) {
+                selectedCount.textContent = '選択: ' + count + ' 件';
+            }
+            if (selectAll) {
+                selectAll.checked = allBoxes.length > 0 && count === allBoxes.length;
+                selectAll.indeterminate = count > 0 && count < allBoxes.length;
+            }
+        }
+
+        function toggleAllRecordings(source) {
+            document.querySelectorAll('.recording-checkbox').forEach((checkbox) => {
+                checkbox.checked = source.checked;
+            });
+            updateSelectedCount();
+        }
+
+        const deleteForm = document.getElementById('delete-recordings-form');
+        if (deleteForm) {
+            deleteForm.addEventListener('submit', function(event) {
+                const count = getSelectedCheckboxes().length;
+                if (count === 0) {
+                    alert('削除対象を選択してください。');
+                    event.preventDefault();
+                    return;
+                }
+
+                const drive = document.getElementById('delete-drive').checked;
+                const message = '本当に削除しますか？\n\n対象\n' + count + '件\n\nGoogle Drive削除: ' + (drive ? 'あり' : 'なし');
+                if (!confirm(message)) {
+                    event.preventDefault();
+                }
+            });
+            updateSelectedCount();
+        }
+    </script>
 </body>
 </html>
