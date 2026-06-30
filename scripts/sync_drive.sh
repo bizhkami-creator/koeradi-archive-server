@@ -18,6 +18,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DATA_DIR="$PROJECT_ROOT/data"
 LOG_FILE="$PROJECT_ROOT/logs/sync_drive.log"
 METADATA_SCRIPT="$SCRIPT_DIR/generate_metadata.py"
+SETTINGS_FILE="$PROJECT_ROOT/config/settings.yaml"
 
 REMOTE_NAME="koeradi-drive"
 DEST_FOLDER="KoeRadiArchive"
@@ -45,6 +46,35 @@ done
 log "=== Google Drive 同期スクリプト開始 ==="
 if [ "$IS_DRY_RUN" = true ]; then
     log "[MODE] dry-run モードで実行中 (実際の転送は行われません)"
+fi
+
+# 0. Settings画面の Google Drive ON/OFF を反映
+DRIVE_ENABLED=$(python3 - "$SETTINGS_FILE" <<'PY'
+import sys
+try:
+    import yaml
+except ImportError:
+    print("true")
+    sys.exit(0)
+
+settings_file = sys.argv[1]
+try:
+    with open(settings_file, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    enabled = data.get("drive", {}).get("enabled", True)
+except FileNotFoundError:
+    enabled = True
+except Exception:
+    enabled = True
+
+print("true" if enabled else "false")
+PY
+)
+
+if [ "$DRIVE_ENABLED" != "true" ]; then
+    log "Google Drive同期は無効です。"
+    log "=== Google Drive 同期スクリプト終了 (disabled) ==="
+    exit 0
 fi
 
 # 1. rclone コマンドの存在確認

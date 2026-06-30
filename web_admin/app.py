@@ -16,8 +16,104 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RULES_FILE = os.path.join(BASE_DIR, 'config', 'recording_rules.yaml')
 STATIONS_FILE = os.path.join(BASE_DIR, 'config', 'stations.yaml')
+SETTINGS_FILE = os.path.join(BASE_DIR, 'config', 'settings.yaml')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
+
+DEFAULT_SETTINGS = {
+    'drive': {
+        'enabled': True
+    },
+    'scheduler': {
+        'enabled': False,
+        'mode': 'filtered',
+        'interval': 'daily',
+        'hour': 3,
+        'minute': 0
+    }
+}
+
+VALID_SCHEDULER_MODES = {'filtered', 'full'}
+VALID_SCHEDULER_INTERVALS = {'hourly', 'every_6_hours', 'daily', 'weekly'}
+
+JOB_COMMANDS = {
+    'dry_run_yesterday': {
+        'label': '昨日分Dry Run',
+        'command': ['bash', 'scripts/run_yesterday_all.sh', '--filtered', '--dry-run'],
+        'requires_drive': False,
+    },
+    'record_yesterday': {
+        'label': '昨日分録音',
+        'command': ['bash', 'scripts/run_yesterday_all.sh', '--filtered'],
+        'requires_drive': False,
+    },
+    'sync_now': {
+        'label': '今すぐ同期',
+        'command': ['bash', 'scripts/sync_drive.sh'],
+        'requires_drive': True,
+    },
+}
+
+def merge_settings(raw):
+    """settings.yaml の不足・不正値をデフォルトで補完する"""
+    raw = raw or {}
+    drive = raw.get('drive') or {}
+    scheduler = raw.get('scheduler') or {}
+
+    mode = scheduler.get('mode', DEFAULT_SETTINGS['scheduler']['mode'])
+    if mode not in VALID_SCHEDULER_MODES:
+        mode = DEFAULT_SETTINGS['scheduler']['mode']
+
+    interval = scheduler.get('interval', DEFAULT_SETTINGS['scheduler']['interval'])
+    if interval not in VALID_SCHEDULER_INTERVALS:
+        interval = DEFAULT_SETTINGS['scheduler']['interval']
+
+    try:
+        hour = int(scheduler.get('hour', DEFAULT_SETTINGS['scheduler']['hour']))
+    except (TypeError, ValueError):
+        hour = DEFAULT_SETTINGS['scheduler']['hour']
+    hour = min(max(hour, 0), 23)
+
+    try:
+        minute = int(scheduler.get('minute', DEFAULT_SETTINGS['scheduler']['minute']))
+    except (TypeError, ValueError):
+        minute = DEFAULT_SETTINGS['scheduler']['minute']
+    minute = min(max(minute, 0), 59)
+
+    return {
+        'drive': {
+            'enabled': bool(drive.get('enabled', DEFAULT_SETTINGS['drive']['enabled']))
+        },
+        'scheduler': {
+            'enabled': bool(scheduler.get('enabled', DEFAULT_SETTINGS['scheduler']['enabled'])),
+            'mode': mode,
+            'interval': interval,
+            'hour': hour,
+            'minute': minute,
+        }
+    }
+
+def load_settings():
+    """運用設定(settings.yaml)を読み込み、存在しない場合は自動生成する"""
+    if not os.path.exists(SETTINGS_FILE):
+        save_settings(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        data = {}
+    settings = merge_settings(data)
+    if settings != data:
+        save_settings(settings)
+    return settings
+
+def save_settings(settings):
+    """運用設定(settings.yaml)を保存する"""
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    normalized = merge_settings(settings)
+    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        yaml.dump(normalized, f, allow_unicode=True, sort_keys=False)
 
 def load_rules():
     """録音ルール設定ファイル(recording_rules.yaml)を読み込む"""
@@ -107,6 +203,109 @@ def get_gdrive_sync_status():
     except Exception:
         pass
     return {'last_sync': last_sync, 'status': status}
+
+def append_settings_job_event(job_name, command, drive_enabled, status, message, exit_code=None):
+    """Settingsジョブの状態をJSON Linesで記録する"""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    event = {
+        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'job_name': job_name,
+        'command': command,
+        'drive_enabled': drive_enabled,
+        'status': status,
+        'message': message,
+        'exit_code': exit_code,
+    }
+    with open(SETTINGS_JOBS_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(event, ensure_ascii=False) + '\n')
+
+def get_settings_job_status(max_lines=80):
+    """settings_jobs.log から最新ステータスと末尾ログを取得する"""
+    if not os.path.exists(SETTINGS_JOBS_LOG):
+        return {
+            'status': 'unknown',
+            'job_name': '-',
+            'timestamp': '-',
+            'command': '-',
+            'drive_enabled': None,
+            'exit_code': None,
+            'message': 'ジョブ履歴はまだありません。',
+            'log_tail': 'logs/settings_jobs.log はまだ存在しません。'
+        }
+
+    try:
+        with open(SETTINGS_JOBS_LOG, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+    except Exception as e:
+        return {
+            'status': 'failed',
+            'job_name': '-',
+            'timestamp': '-',
+            'command': '-',
+            'drive_enabled': None,
+            'exit_code': None,
+            'message': f'ログ読み込みエラー: {e}',
+            'log_tail': ''
+        }
+
+    latest_event = None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line or not line.startswith('{'):
+            continue
+        try:
+            latest_event = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+
+    if latest_event is None:
+        latest_event = {
+            'status': 'unknown',
+            'job_name': '-',
+            'timestamp': '-',
+            'command': '-',
+            'drive_enabled': None,
+            'exit_code': None,
+            'message': 'JSON形式のジョブ履歴が見つかりません。'
+        }
+
+    latest_event['log_tail'] = ''.join(lines[-max_lines:])
+    return latest_event
+
+def start_settings_job(job_key):
+    """Settings画面からのジョブをバックグラウンド起動する"""
+    settings = load_settings()
+    job = JOB_COMMANDS.get(job_key)
+    if not job:
+        return False, '不明なジョブです。'
+
+    drive_enabled = settings['drive']['enabled']
+    command_text = ' '.join(job['command'])
+
+    if job.get('requires_drive') and not drive_enabled:
+        msg = 'Google Drive同期は無効です。'
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'disabled', msg)
+        return False, msg
+
+    runner_script = os.path.join(BASE_DIR, 'scripts', 'run_settings_job.py')
+    cmd = [
+        sys.executable,
+        runner_script,
+        '--job-name',
+        job['label'],
+        '--drive-enabled',
+        'true' if drive_enabled else 'false',
+        '--',
+    ] + job['command']
+
+    try:
+        subprocess.Popen(cmd, cwd=BASE_DIR)
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'running', f"Job started: {job['label']}")
+        return True, f"Job started: {job['label']}"
+    except Exception as e:
+        append_settings_job_event(job['label'], command_text, drive_enabled, 'failed', f"起動失敗: {e}", 1)
+        return False, f"ジョブの起動に失敗しました: {e}"
 
 def get_recorded_count():
     """audio/ 配下の録音済み音声ファイル総数を取得"""
@@ -215,6 +414,7 @@ def get_recent_recordings(limit=20):
 @app.route('/')
 def dashboard():
     """トップページ: 運用状態ダッシュボード"""
+    settings = load_settings()
     hdd = get_hdd_usage()
     gdrive = get_gdrive_sync_status()
     recorded_count = get_recorded_count()
@@ -226,10 +426,58 @@ def dashboard():
         'dashboard.html',
         hdd=hdd,
         gdrive=gdrive,
+        settings=settings,
         recorded_count=recorded_count,
         keywords_summary=keywords_summary,
         today_matched=today_matched,
         recent_recordings=recent_recordings
+    )
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings_page():
+    """運用設定ページ"""
+    message = None
+    message_type = 'info'
+
+    if request.method == 'POST':
+        action = request.form.get('action', '')
+        if action == 'save_settings':
+            settings = {
+                'drive': {
+                    'enabled': request.form.get('drive_enabled') == 'on'
+                },
+                'scheduler': {
+                    'enabled': request.form.get('scheduler_enabled') == 'on',
+                    'mode': request.form.get('scheduler_mode', 'filtered'),
+                    'interval': request.form.get('scheduler_interval', 'daily'),
+                    'hour': request.form.get('scheduler_hour', 3),
+                    'minute': request.form.get('scheduler_minute', 0),
+                }
+            }
+            save_settings(settings)
+            message = 'Settings saved.'
+            message_type = 'success'
+        elif action in JOB_COMMANDS:
+            success, msg = start_settings_job(action)
+            message = msg
+            message_type = 'success' if success else 'warning'
+        else:
+            message = '不明な操作です。'
+            message_type = 'danger'
+
+    settings = load_settings()
+    gdrive = get_gdrive_sync_status()
+    job_status = get_settings_job_status()
+
+    return render_template(
+        'settings.html',
+        settings=settings,
+        gdrive=gdrive,
+        job_status=job_status,
+        message=message,
+        message_type=message_type,
+        scheduler_modes=sorted(VALID_SCHEDULER_MODES),
+        scheduler_intervals=['hourly', 'every_6_hours', 'daily', 'weekly']
     )
 
 @app.route('/rules')

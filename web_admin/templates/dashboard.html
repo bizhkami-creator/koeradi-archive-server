@@ -22,6 +22,7 @@
                 <a href="{{ url_for('recordings_page') }}" class="btn btn-primary" style="background-color: #8b5cf6;">🎵 Recordings</a>
                 <a href="{{ url_for('rules_page') }}" class="btn btn-primary">📋 Recording Rules</a>
                 <a href="{{ url_for('stations_page') }}" class="btn btn-primary" style="background-color: #475569;">📻 Stations</a>
+                <a href="{{ url_for('settings_page') }}" class="btn btn-primary" style="background-color: #0f766e;">⚙️ Settings</a>
                 <button class="btn btn-secondary" onclick="executeDryRun()">⚡ Dry Run 実行</button>
                 <button class="btn btn-outline" onclick="location.reload()">🔄 Refresh</button>
             </div>
@@ -78,6 +79,32 @@
                     <div class="stat-title">登録キーワード数</div>
                     <div class="stat-main">{{ keywords_summary.total }}<span class="stat-unit">件</span></div>
                     <div class="stat-sub">有効 {{ keywords_summary.enabled }}件 / 無効 {{ keywords_summary.disabled }}件</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ■ 運用設定 -->
+        <section class="section">
+            <div class="card">
+                <h2 class="card-title">■ 運用設定</h2>
+                <div class="settings-summary">
+                    <span>Google Drive:
+                        {% if settings.drive.enabled %}
+                        <span class="badge badge-success">ON</span>
+                        {% else %}
+                        <span class="badge badge-secondary">OFF</span>
+                        {% endif %}
+                    </span>
+                    <span>Scheduler:
+                        {% if settings.scheduler.enabled %}
+                        <span class="badge badge-success">ON</span>
+                        {% else %}
+                        <span class="badge badge-secondary">OFF</span>
+                        {% endif %}
+                    </span>
+                    <span>Mode: <strong>{{ settings.scheduler.mode }}</strong></span>
+                    <span>Interval: <strong>{{ settings.scheduler.interval }}</strong></span>
+                    <span>Next planned time: <strong>Day18では未設定</strong></span>
                 </div>
             </div>
         </section>

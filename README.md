@@ -13,7 +13,8 @@ koeradi-archive/
 ├── config/
 │   ├── programs.yaml         # 録音対象番組の設定ファイル
 │   ├── stations.yaml         # 一括録音対象放送局の設定ファイル (Day13追加)
-│   └── recording_rules.yaml  # キーワード録音ルール設定ファイル (Day14追加)
+│   ├── recording_rules.yaml  # キーワード録音ルール設定ファイル (Day14追加)
+│   └── settings.yaml         # 運用設定ファイル (Day18追加)
 ├── data/
 │   ├── audio/                # 音声ファイルの保存先 (data/audio/{放送局名}/{YYYY}/{MM}/{YYYY-MM-DD}_{番組名}.m4a)
 │   │   └── sample/           # サンプル音声配置フォルダ
@@ -35,11 +36,12 @@ koeradi-archive/
 │   ├── record_test.sh        # radikoタイムフリー録音の個別テストスクリプト
 │   ├── record_from_config.py # 設定ファイルに基づく自動判定・録音スクリプト
 │   ├── sync_drive.sh         # rcloneを使用してGoogle Driveへ同期するスクリプト
+│   ├── run_settings_job.py   # Settings画面ジョブ実行ラッパー (Day18追加)
 │   └── vendor/               # 外部オープンソーススクリプト配置先
 │       └── rec_radiko_ts.sh     # radikoタイムフリー取得スクリプト
-├── web_admin/                # Web管理画面アプリケーション (Day15/Day17更新)
+├── web_admin/                # Web管理画面アプリケーション (Day15/Day18更新)
 │   ├── app.py                # Flaskアプリケーション本体 (録音一覧・配信エンドポイント追加)
-│   ├── templates/            # HTMLテンプレート (dashboard.html, rules.html, stations.html, recordings.html)
+│   ├── templates/            # HTMLテンプレート (dashboard.html, rules.html, stations.html, recordings.html, settings.html)
 │   └── static/               # CSSスタイルシート (style.css)
 └── logs/                     # ログファイル保存用フォルダ
 ```
@@ -67,6 +69,7 @@ koeradi-archive/
 - **Day15**: ブラウザからキーワード録音ルールの確認・追加・有効化/無効化・削除および filtered dry-run の実行ができる Web管理画面 (`web_admin/app.py`) を実装。
 - **Day16**: サーバーの運用状況（HDD使用率、Google Drive同期状態、録音済み件数、キーワード数、本日の録音予定番組、最新録音履歴）がひと目で確認できる運用ダッシュボードを構築。録音フォルダおよび Google Drive の保存構造を `局名/YYYY/MM/YYYY-MM-DD_番組名.m4a` へ最適化。
 - **Day17**: Web管理画面に録音一覧ページ (`/recordings`) および手動録音実行ページ (`/manual-recording`) を追加。ブラウザ上での HTML5 オーディオ直接再生、リアルタイム検索・フィルタリング、バックグラウンドでの非同期録音ジョブ実行（Preview機能・ログ表示機能含む）、および Path Traversal 対策セキュリティ音声配信エンドポイント (`/audio/...`) を構築。
+- **Day18**: Web管理画面に Settings 画面 (`/settings`) を追加。Google Drive同期ON/OFF、Scheduler設定ファイル管理、昨日分Dry Run、昨日分録音、今すぐ同期、バックグラウンド実行ジョブのステータス表示を実装。Day18では cron / systemd timer の実設定はまだ行わず、`config/settings.yaml` の管理のみ対応。
 
 ## ストレージ構成 (Day11/Day12)
 データ保存領域（`data` ディレクトリ）は外付けHDD（`/mnt/koeradi`）へ接続されており、シンボリックリンクを通じて透過的にアクセスされます。
@@ -106,6 +109,23 @@ rules:
     keyword: ラジオショー
     enabled: false
 ```
+
+### 運用設定 (`config/settings.yaml`) (Day18)
+Google Drive同期とSchedulerの運用設定を定義します。ファイルが存在しない場合はWeb管理画面起動時に自動生成されます。
+
+```yaml
+drive:
+  enabled: true
+
+scheduler:
+  enabled: false
+  mode: filtered
+  interval: daily
+  hour: 3
+  minute: 0
+```
+
+`mode` は `filtered` / `full`、`interval` は `hourly` / `every_6_hours` / `daily` / `weekly` をサポートします。
 
 ## 昨日の全対象局一括録音運用スクリプトの使い方 (`run_yesterday_all.sh`)
 `config/stations.yaml` に設定された全局の昨日の番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
@@ -159,7 +179,7 @@ bash scripts/run_daily.sh --yesterday
 bash scripts/run_daily.sh --date 2026-06-27
 ```
 
-## Web管理画面・運用ダッシュボードの使い方 (`web_admin/app.py`) (Day15/Day16)
+## Web管理画面・運用ダッシュボードの使い方 (`web_admin/app.py`) (Day15/Day18)
 ブラウザからサーバーの運用状態の確認、録音条件の設定変更、および dry-run 実行が行えるWebアプリケーションです。
 
 ### 起動方法
@@ -183,6 +203,12 @@ http://<RaspberryPiのIPアドレス>:8080
   - 録音キーワードの確認、新規追加、有効化/無効化切り替え、削除が可能です。
 - **dry-run 実行**:
   - ボタンをクリックすると、昨日の番組表に対するキーワード抽出シミュレーションがブラウザ上で実行され、コンソールに結果が表示されます。
+- **Settings画面 (`/settings`)** (Day18追加):
+  - **Google Drive同期ON/OFF**: `drive.enabled` を切り替えます。OFFの場合、自動同期およびWeb画面からの今すぐ同期は実行されず、「Google Drive同期は無効です。」と表示されます。
+  - **Scheduler設定**: `enabled`, `mode`, `interval`, `hour`, `minute` を保存できます。Day18では設定ファイル管理のみで、cron / systemd timer の実更新はまだ行いません。
+  - **Testボタン**: 昨日分Dry Run、昨日分録音、今すぐ同期をブラウザからバックグラウンド起動できます。
+  - **ステータス表示**: 実行中、成功、失敗、Google Drive同期無効、実行開始時刻、実行コマンド、終了コード、最新ログの一部を表示します。
+  - **ジョブログ**: `logs/settings_jobs.log` に実行日時、ジョブ名、コマンド、`drive.enabled`、起動結果、終了コードを記録します。
 
 > [!CAUTION]
 > **外部公開に関する注意事項**
