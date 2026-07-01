@@ -22,6 +22,14 @@ LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
 DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
 
+ADMIN_NAV = [
+    {'key': 'dashboard', 'label': 'ダッシュボード', 'endpoint': 'dashboard'},
+    {'key': 'jobs', 'label': '録音管理', 'endpoint': 'jobs_page'},
+    {'key': 'files', 'label': 'ファイル管理', 'endpoint': 'files_page'},
+    {'key': 'settings', 'label': '設定', 'endpoint': 'settings_page'},
+    {'key': 'logs', 'label': 'ログ', 'endpoint': 'logs_page'},
+]
+
 DEFAULT_SETTINGS = {
     'drive': {
         'enabled': True
@@ -229,7 +237,7 @@ def build_scheduler_target_dates(lookback_days):
     today = datetime.date.today()
     return [
         (today - datetime.timedelta(days=offset)).strftime('%Y-%m-%d')
-        for offset in range(1, lookback_days + 1)
+        for offset in range(0, lookback_days + 1)
     ]
 
 def append_settings_job_event(job_name, command, drive_enabled, status, message, exit_code=None, extra=None):
@@ -642,7 +650,16 @@ def move_recordings_to_trash(relative_paths, delete_drive=False):
     log_delete_recordings(event)
     return event
 
+@app.context_processor
+def inject_admin_nav():
+    return {'admin_nav': ADMIN_NAV}
+
 @app.route('/')
+def legacy_dashboard():
+    """既存トップURLは新しい管理トップへ転送する"""
+    return redirect(url_for('dashboard'))
+
+@app.route('/admin')
 def dashboard():
     """トップページ: 運用状態ダッシュボード"""
     settings = load_settings()
@@ -656,6 +673,7 @@ def dashboard():
 
     return render_template(
         'dashboard.html',
+        active_nav='dashboard',
         hdd=hdd,
         gdrive=gdrive,
         settings=settings,
@@ -667,6 +685,7 @@ def dashboard():
     )
 
 @app.route('/settings', methods=['GET', 'POST'])
+@app.route('/admin/settings', methods=['GET', 'POST'])
 def settings_page():
     """運用設定ページ"""
     message = None
@@ -706,6 +725,7 @@ def settings_page():
 
     return render_template(
         'settings.html',
+        active_nav='settings',
         settings=settings,
         gdrive=gdrive,
         job_status=job_status,
@@ -716,19 +736,31 @@ def settings_page():
         scheduler_intervals=['hourly', 'every_6_hours', 'daily', 'weekly']
     )
 
-@app.route('/rules')
-def rules_page():
+@app.route('/admin/jobs')
+def jobs_page():
     """録音ルール管理ページ"""
     rules = load_rules()
-    return render_template('rules.html', rules=rules)
+    return render_template('jobs.html', active_nav='jobs', rules=rules)
+
+@app.route('/rules')
+def rules_page():
+    """旧URL互換: 録音ルール管理ページ"""
+    return jobs_page()
+
+@app.route('/admin/jobs/new')
+def job_form_page():
+    """録音ルール追加ページ"""
+    return render_template('job_form.html', active_nav='jobs')
 
 @app.route('/stations')
+@app.route('/admin/settings/stations')
 def stations_page():
     """対象放送局管理ページ"""
     stations = load_stations()
-    return render_template('stations.html', stations=stations)
+    return render_template('stations.html', active_nav='settings', stations=stations)
 
 @app.route('/stations/toggle/<int:index>', methods=['POST'])
+@app.route('/admin/settings/stations/toggle/<int:index>', methods=['POST'])
 def toggle_station(index):
     """放送局の有効/無効切り替え"""
     stations = load_stations()
@@ -738,6 +770,7 @@ def toggle_station(index):
     return redirect(url_for('stations_page'))
 
 @app.route('/rules/add', methods=['POST'])
+@app.route('/admin/jobs/add', methods=['POST'])
 def add_rule():
     """新しい録音ルールを追加"""
     name = request.form.get('name', '').strip()
@@ -747,57 +780,61 @@ def add_rule():
         rules = load_rules()
         rules.append({'name': name, 'keyword': keyword, 'enabled': enabled})
         save_rules(rules)
-    return redirect(url_for('rules_page'))
+    return redirect(url_for('jobs_page'))
 
 @app.route('/rules/toggle/<int:index>', methods=['POST'])
+@app.route('/admin/jobs/toggle/<int:index>', methods=['POST'])
 def toggle_rule(index):
     """ルールの有効/無効切り替え"""
     rules = load_rules()
     if 0 <= index < len(rules):
         rules[index]['enabled'] = not rules[index].get('enabled', False)
         save_rules(rules)
-    return redirect(url_for('rules_page'))
+    return redirect(url_for('jobs_page'))
 
 @app.route('/rules/delete/<int:index>', methods=['POST'])
+@app.route('/admin/jobs/delete/<int:index>', methods=['POST'])
 def delete_rule(index):
     """ルールの削除"""
     rules = load_rules()
     if 0 <= index < len(rules):
         rules.pop(index)
         save_rules(rules)
-    return redirect(url_for('rules_page'))
+    return redirect(url_for('jobs_page'))
 
 @app.route('/run-dry-run', methods=['POST'])
 def run_dry_run():
     """dry-run 実行エンドポイント (高速キーワード抽出シミュレーション)"""
-    yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    target_dates = build_scheduler_target_dates(1)
     all_stations = load_stations()
     stations = [s['station_id'] for s in all_stations if s.get('enabled', True) and s.get('station_id')]
     
     filter_script = os.path.join(BASE_DIR, 'scripts', 'filter_programs.py')
-    output_lines = [f"=== 昨日のキーワード抽出 dry-run シミュレーション (対象日: {yesterday_str}) ===\n"]
+    output_lines = [f"=== 当日＋昨日のキーワード抽出 dry-run シミュレーション (対象日: {', '.join(target_dates)}) ===\n"]
     total_matched = 0
     
-    for station in stations:
-        try:
-            res = subprocess.run(
-                ['python3', filter_script, '--station', station, '--date', yesterday_str, '--dry-run'],
-                cwd=BASE_DIR, capture_output=True, text=True, timeout=10
-            )
-            lines = res.stdout.split('\n')
-            matched_in_st = [l for l in lines if 'ヒット番組名:' in l]
-            if matched_in_st:
-                output_lines.append(f"【放送局: {station}】")
-                for m in matched_in_st:
-                    clean_m = m.replace('  - ヒット番組名: ', '  • ')
-                    output_lines.append(clean_m)
-                    total_matched += 1
-                output_lines.append("")
-        except Exception as e:
-            output_lines.append(f"【放送局: {station}】 エラー: {e}\n")
+    for target_date in target_dates:
+        output_lines.append(f"--- 対象日: {target_date} ---")
+        for station in stations:
+            try:
+                res = subprocess.run(
+                    ['python3', filter_script, '--station', station, '--date', target_date, '--dry-run'],
+                    cwd=BASE_DIR, capture_output=True, text=True, timeout=10
+                )
+                lines = res.stdout.split('\n')
+                matched_in_st = [l for l in lines if 'ヒット番組名:' in l]
+                if matched_in_st:
+                    output_lines.append(f"【放送局: {station}】")
+                    for m in matched_in_st:
+                        clean_m = m.replace('  - ヒット番組名: ', '  • ')
+                        output_lines.append(clean_m)
+                        total_matched += 1
+                    output_lines.append("")
+            except Exception as e:
+                output_lines.append(f"【放送局: {station}】 エラー: {e}\n")
             
     output_lines.append(f"==================================================")
-    output_lines.append(f"全対象局 ({len(stations)}局) の確認完了: 合計 {total_matched} 件の番組が録音対象として抽出されました。")
+    output_lines.append(f"対象日 {len(target_dates)}日・全対象局 ({len(stations)}局) の確認完了: 合計 {total_matched} 件の番組が録音対象として抽出されました。")
     
     return jsonify({'success': True, 'output': '\n'.join(output_lines)})
 
@@ -814,7 +851,94 @@ def format_size(size_bytes):
     else:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
+def parse_audio_item_from_path(abs_path, station_map):
+    """metadata.json が古い場合でも実ファイルから一覧用メタデータを作る"""
+    audio_dir = os.path.join(DATA_DIR, 'audio')
+    rel_to_audio = os.path.relpath(abs_path, audio_dir).replace('\\', '/')
+    rel_parts = rel_to_audio.split('/')
+    file_name = os.path.basename(abs_path)
+    stem, _ = os.path.splitext(file_name)
+
+    station_name = rel_parts[0] if rel_parts else 'unknown'
+    station_id = station_map.get(station_name, station_name)
+
+    date_str = 'unknown'
+    year = ''
+    month = ''
+    program_name = stem
+    personality = ''
+
+    parts = stem.split('_', 1)
+    if len(parts) == 2 and re.match(r'^\d{4}-\d{2}-\d{2}$', parts[0]):
+        date_str = parts[0]
+        year = date_str[:4]
+        month = date_str[5:7]
+        rest = parts[1]
+        guide_match = find_program_metadata_from_guides(station_id, date_str, rest)
+        if guide_match:
+            program_name = guide_match.get('title', rest)
+            personality = guide_match.get('personality', '')
+        elif '_' in rest:
+            program_name, personality = rest.rsplit('_', 1)
+        else:
+            program_name = rest
+
+    return {
+        'file_name': file_name,
+        'station_id': station_id,
+        'station_name': station_name,
+        'program_name': program_name,
+        'personality': personality,
+        'date': date_str,
+        'year': year,
+        'month': month,
+        'relative_path': f"audio/{rel_to_audio}",
+        'file_size': format_size(os.path.getsize(abs_path)),
+    }
+
+def find_program_metadata_from_guides(station_id, date_str, filename_rest):
+    """番組表JSONからファイル名に対応する番組名・出演者を補完する"""
+    for base in ('filtered_programs', 'program_guides'):
+        json_path = os.path.join(DATA_DIR, base, station_id, f'{date_str}.json')
+        if not os.path.exists(json_path):
+            continue
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+        except Exception:
+            continue
+
+        programs = data.get('matched_programs', []) or data.get('programs', [])
+        for prog in programs:
+            safe_title = re.sub(r'[/\\:*?"<>|\s]', '_', str(prog.get('title', '')))[:50]
+            safe_person = re.sub(r'[/\\:*?"<>|\s]', '_', str(prog.get('personality', '')))[:30]
+            expected = f"{safe_title}_{safe_person}" if safe_person else safe_title
+            if filename_rest in {expected, safe_title}:
+                return prog
+    return None
+
+def scan_audio_recording_items():
+    """data/audio 配下の実ファイルを走査して録音一覧用itemを返す"""
+    audio_dir = os.path.join(DATA_DIR, 'audio')
+    if not os.path.exists(audio_dir):
+        return []
+
+    stations = load_stations()
+    station_map = {s.get('station_name', ''): s.get('station_id', '') for s in stations if s.get('station_name')}
+    items = []
+    for root, dirs, files in os.walk(audio_dir):
+        for file in files:
+            if not file.lower().endswith(('.m4a', '.mp3', '.wav', '.aac')):
+                continue
+            abs_path = os.path.join(root, file)
+            try:
+                items.append(parse_audio_item_from_path(abs_path, station_map))
+            except Exception as e:
+                print(f"録音ファイル解析スキップ: {abs_path}: {e}")
+    return items
+
 @app.route('/recordings')
+@app.route('/admin/recordings')
 def recordings_page():
     """録音一覧ページ (検索・フィルター・再生)"""
     selected_station = request.args.get('station', '').strip()
@@ -838,6 +962,8 @@ def recordings_page():
     stations_set = set()
     dates_set = set()
     
+    seen_paths = set()
+
     if os.path.exists(meta_file):
         try:
             with open(meta_file, 'r', encoding='utf-8') as f:
@@ -861,6 +987,8 @@ def recordings_page():
                     file_size_str = "不明"
                     if os.path.exists(abs_path):
                         file_size_str = format_size(os.path.getsize(abs_path))
+                    else:
+                        continue
                         
                     items.append({
                         'file_name': file_name,
@@ -874,8 +1002,19 @@ def recordings_page():
                         'relative_path': rel_path,
                         'file_size': file_size_str
                     })
+                    seen_paths.add(rel_path)
         except Exception as e:
             print(f"metadata.json 読み込み失敗: {e}")
+
+    for item in scan_audio_recording_items():
+        if item['relative_path'] in seen_paths:
+            continue
+        items.append(item)
+        seen_paths.add(item['relative_path'])
+        if item['station_name'] and item['station_name'] != 'unknown':
+            stations_set.add(item['station_name'])
+        if item['date'] and item['date'] != 'unknown':
+            dates_set.add(item['date'])
 
     # フィルタリング
     filtered_items = []
@@ -901,8 +1040,11 @@ def recordings_page():
     stations_list = sorted(list(stations_set))
     dates_list = sorted(list(dates_set), reverse=True)
     
+    template_name = 'files.html' if request.path.startswith('/admin/files') else 'recordings.html'
+
     return render_template(
-        'recordings.html',
+        template_name,
+        active_nav='files',
         recordings=filtered_items,
         stations=stations_list,
         dates=dates_list,
@@ -916,13 +1058,14 @@ def recordings_page():
     )
 
 @app.route('/recordings/delete', methods=['POST'])
+@app.route('/admin/files/delete', methods=['POST'])
 def delete_recordings():
     """選択された録音ファイルを data/trash へ移動し、metadataを再生成する"""
     selected_paths = request.form.getlist('recording_paths')
     delete_drive = request.form.get('delete_drive') == 'on'
 
     if not selected_paths:
-        return redirect(url_for('recordings_page', delete_errors='対象が選択されていません。'))
+        return redirect(url_for('files_page', delete_errors='対象が選択されていません。'))
 
     result = move_recordings_to_trash(selected_paths, delete_drive=delete_drive)
     args = {
@@ -931,7 +1074,12 @@ def delete_recordings():
     }
     if result['failures']:
         args['delete_errors'] = f"{len(result['failures'])}件のエラーがあります。logs/delete_recordings.log を確認してください。"
-    return redirect(url_for('recordings_page', **args))
+    return redirect(url_for('files_page', **args))
+
+@app.route('/admin/files')
+def files_page():
+    """新しいファイル管理URL。実体は既存の録音一覧ビューを利用する。"""
+    return recordings_page()
 
 @app.route('/audio/<path:filepath>')
 def serve_audio(filepath):
@@ -1023,6 +1171,7 @@ def generate_preview(date_str, station_ids):
     return preview_items
 
 @app.route('/manual-recording', methods=['GET', 'POST'])
+@app.route('/admin/manual-record', methods=['GET', 'POST'])
 def manual_recording_page():
     """手動録音ジョブ実行ページ"""
     all_stations = load_stations()
@@ -1067,6 +1216,7 @@ def manual_recording_page():
     
     return render_template(
         'manual_recording.html',
+        active_nav='jobs',
         enabled_stations=enabled_stations,
         selected_date=selected_date,
         selected_stations=selected_stations,
@@ -1077,6 +1227,7 @@ def manual_recording_page():
     )
 
 @app.route('/manual-recording/logs')
+@app.route('/admin/manual-record/logs')
 def manual_recording_logs_api():
     """ジョブログの最新行を取得するAPI"""
     return jsonify({'logs': get_manual_recording_logs(100)})
@@ -1103,6 +1254,7 @@ def check_program_recorded(station_id, station_name, date_str, title, personalit
     return os.path.exists(abs_output_path) or os.path.exists(abs_output_path_old)
 
 @app.route('/program-guide', methods=['GET', 'POST'])
+@app.route('/admin/program-guide', methods=['GET', 'POST'])
 def program_guide_page():
     """番組表一覧ページ"""
     all_stations = load_stations()
@@ -1169,6 +1321,7 @@ def program_guide_page():
             
     return render_template(
         'program_guide.html',
+        active_nav='jobs',
         enabled_stations=enabled_stations,
         selected_date=selected_date,
         selected_station=selected_station,
@@ -1199,6 +1352,39 @@ def api_record_single():
         return jsonify({'success': True, 'message': f"番組「{title}」の録音処理をバックグラウンドで開始しました。"})
     except Exception as e:
         return jsonify({'success': False, 'message': f"録音処理の起動に失敗しました: {e}"})
+
+def read_log_tail(filename, max_lines=160):
+    """logs配下の指定ログ末尾を返す"""
+    safe_name = os.path.basename(filename)
+    path = os.path.join(LOGS_DIR, safe_name)
+    if not os.path.exists(path):
+        return f'logs/{safe_name} はまだ存在しません。'
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return ''.join(f.readlines()[-max_lines:])
+    except Exception as e:
+        return f'ログ読み込みエラー: {e}'
+
+@app.route('/admin/logs')
+def logs_page():
+    """管理画面ログ確認ページ"""
+    log_files = [
+        {'key': 'app', 'label': 'アプリログ', 'filename': 'app.log'},
+        {'key': 'scheduler', 'label': '録音ジョブログ', 'filename': 'scheduler.log'},
+        {'key': 'manual', 'label': '手動録音ログ', 'filename': 'manual_recording.log'},
+        {'key': 'settings', 'label': '設定ジョブログ', 'filename': 'settings_jobs.log'},
+        {'key': 'delete', 'label': 'ファイル削除ログ', 'filename': 'delete_recordings.log'},
+        {'key': 'sync', 'label': '同期ログ', 'filename': 'sync_drive.log'},
+    ]
+    selected = request.args.get('log', 'scheduler')
+    selected_file = next((item for item in log_files if item['key'] == selected), log_files[1])
+    return render_template(
+        'logs.html',
+        active_nav='logs',
+        log_files=log_files,
+        selected_log=selected_file,
+        logs_text=read_log_tail(selected_file['filename'])
+    )
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)

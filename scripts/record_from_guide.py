@@ -76,6 +76,23 @@ def parse_start_datetime(start_time_iso: str) -> str:
     return dt.strftime("%Y%m%d%H%M")
 
 
+def parse_program_datetimes(prog):
+    start_iso = prog.get("start_time")
+    end_iso = prog.get("end_time")
+    start_dt = datetime.datetime.fromisoformat(start_iso) if start_iso else None
+    end_dt = datetime.datetime.fromisoformat(end_iso) if end_iso else None
+    if end_dt is None and start_dt is not None:
+        duration = int(prog.get("duration_minutes", 0) or 0)
+        end_dt = start_dt + datetime.timedelta(minutes=duration)
+    return start_dt, end_dt
+
+
+def is_program_finished(prog, now=None):
+    now = now or datetime.datetime.now()
+    _, end_dt = parse_program_datetimes(prog)
+    return end_dt is not None and end_dt <= now
+
+
 def main():
     parser = argparse.ArgumentParser(description="radiko番組表JSONに基づく全番組自動録音スクリプト")
     parser.add_argument("--station", required=True, help="放送局ID (例: LFR, TBS)")
@@ -187,7 +204,12 @@ def main():
 
             rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{prog_filename_part}.m4a"
             abs_output_path = PROJECT_ROOT / rel_output_path
-            status = "already_exists_skip" if abs_output_path.exists() else "will_record"
+            if abs_output_path.exists():
+                status = "already_exists_skip"
+            elif not is_program_finished(prog):
+                status = "not_finished_skip"
+            else:
+                status = "will_record"
 
             print(f"{idx}. {raw_title}")
             print(f"   start_datetime: {start_datetime}")
@@ -221,6 +243,11 @@ def main():
 
             if abs_output_path.exists():
                 log_message(f"SKIP: already_exists_skip ({rel_output_path})")
+                skip_count += 1
+            elif not is_program_finished(prog):
+                _, end_dt = parse_program_datetimes(prog)
+                end_text = end_dt.strftime("%Y-%m-%d %H:%M") if end_dt else "不明"
+                log_message(f"SKIP: not_finished_skip (終了予定: {end_text})")
                 skip_count += 1
             else:
                 log_message(f"録音開始: {station_id} - {raw_title} (日時: {start_datetime}, 時間: {duration}分)")

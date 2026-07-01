@@ -140,7 +140,7 @@ def build_target_dates(lookback_days):
     today = datetime.date.today()
     return [
         (today - datetime.timedelta(days=offset)).strftime("%Y-%m-%d")
-        for offset in range(1, lookback_days + 1)
+        for offset in range(0, lookback_days + 1)
     ]
 
 

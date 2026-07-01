@@ -1,225 +1,192 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KoeRadi Archive Server - Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <!-- メインヘッダー -->
-        <header>
-            <h1>KoeRadi Archive Server</h1>
-            <p>サーバー運用状況ダッシュボード</p>
-        </header>
+{% extends "base.html" %}
 
-        <!-- メニューバー -->
-        <div class="card menu-card">
-            <div class="menu-buttons">
-                <a href="{{ url_for('program_guide_page') }}" class="btn btn-primary" style="background-color: #0284c7;">📅 Program Guide</a>
-                <a href="{{ url_for('manual_recording_page') }}" class="btn btn-primary" style="background-color: #ef4444;">🎙️ Manual Recording</a>
-                <a href="{{ url_for('recordings_page') }}" class="btn btn-primary" style="background-color: #8b5cf6;">🎵 Recordings</a>
-                <a href="{{ url_for('rules_page') }}" class="btn btn-primary">📋 Recording Rules</a>
-                <a href="{{ url_for('stations_page') }}" class="btn btn-primary" style="background-color: #475569;">📻 Stations</a>
-                <a href="{{ url_for('settings_page') }}" class="btn btn-primary" style="background-color: #0f766e;">⚙️ Settings</a>
-                <button class="btn btn-secondary" onclick="executeDryRun()">⚡ Dry Run 実行</button>
-                <button class="btn btn-outline" onclick="location.reload()">🔄 Refresh</button>
-            </div>
-            <!-- inline dry-run console -->
-            <div id="dashboard-console-wrapper" style="display: none; margin-top: 16px; width: 100%;">
-                <h4 style="margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between;">
-                    <span>dry-run 実行結果:</span>
-                    <span id="loading-spinner" class="loading-spinner">⏳ 実行中...</span>
-                </h4>
-                <pre id="dashboard-console-output" class="console-box"></pre>
+{% block title %}KoeRadi Archive Server - ダッシュボード{% endblock %}
+{% block page_title %}ダッシュボード{% endblock %}
+{% block page_description %}サーバー状態、最新録音状況、次回録音予定、直近ログ概要を確認します{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('manual_recording_page') }}" class="btn btn-primary">手動録音</a>
+<button class="btn btn-secondary" onclick="executeDryRun()">Dry Run 実行</button>
+<button class="btn btn-outline" onclick="location.reload()">更新</button>
+{% endblock %}
+
+{% block content %}
+<div class="card menu-card">
+    <div class="admin-section-links">
+        <a href="{{ url_for('jobs_page') }}">録音ジョブ一覧</a>
+        <a href="{{ url_for('job_form_page') }}">録音ジョブ追加</a>
+        <a href="{{ url_for('manual_recording_page') }}">手動録音</a>
+        <a href="{{ url_for('recordings_page') }}">録音履歴</a>
+        <a href="{{ url_for('files_page') }}">録音ファイル一覧</a>
+        <a href="{{ url_for('logs_page') }}">ログ確認</a>
+    </div>
+    <div id="dashboard-console-wrapper" style="display: none; margin-top: 16px; width: 100%;">
+        <h4 style="margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between;">
+            <span>dry-run 実行結果:</span>
+            <span id="loading-spinner" class="loading-spinner">実行中...</span>
+        </h4>
+        <pre id="dashboard-console-output" class="console-box"></pre>
+    </div>
+</div>
+
+<section class="section">
+    <h2 class="section-header">サーバー状態</h2>
+    <div class="grid-4">
+        <div class="stat-card">
+            <div class="stat-title">HDD使用率</div>
+            <div class="stat-main">{{ hdd.percent }}%</div>
+            <div class="stat-sub">{{ hdd.total_gb }}GB中</div>
+            <div class="stat-sub">使用 {{ hdd.used_gb }}GB / 残り {{ hdd.free_gb }}GB</div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width: {{ hdd.percent }}%;"></div>
             </div>
         </div>
-
-        <!-- ■ システム状態 -->
-        <section class="section">
-            <h2 class="section-header">■ システム状態</h2>
-            <div class="grid-4">
-                <!-- HDD使用率 -->
-                <div class="stat-card">
-                    <div class="stat-title">HDD使用率</div>
-                    <div class="stat-main">{{ hdd.percent }}%</div>
-                    <div class="stat-sub">{{ hdd.total_gb }}GB中</div>
-                    <div class="stat-sub">使用 {{ hdd.used_gb }}GB / 残り {{ hdd.free_gb }}GB</div>
-                    <div class="progress-bar-bg">
-                        <div class="progress-bar-fill" style="width: {{ hdd.percent }}%;"></div>
-                    </div>
-                </div>
-
-                <!-- Google Drive同期状態 -->
-                <div class="stat-card">
-                    <div class="stat-title">Google Drive同期状態</div>
-                    <div class="stat-main">
-                        {% if gdrive.status == 'SUCCESS' %}
-                        <span class="badge badge-success">SUCCESS</span>
-                        {% elif gdrive.status == 'FAILED' %}
-                        <span class="badge badge-danger">FAILED</span>
-                        {% else %}
-                        <span class="badge badge-secondary">{{ gdrive.status }}</span>
-                        {% endif %}
-                    </div>
-                    <div class="stat-sub-label">Last Sync</div>
-                    <div class="stat-sub-val">{{ gdrive.last_sync }}</div>
-                </div>
-
-                <!-- 録音済み番組数 -->
-                <div class="stat-card">
-                    <div class="stat-title">録音済み番組数</div>
-                    <div class="stat-main">{{ recorded_count }}<span class="stat-unit">件</span></div>
-                    <div class="stat-sub">保存ディレクトリ: audio/</div>
-                </div>
-
-                <!-- 登録キーワード数 -->
-                <div class="stat-card">
-                    <div class="stat-title">登録キーワード数</div>
-                    <div class="stat-main">{{ keywords_summary.total }}<span class="stat-unit">件</span></div>
-                    <div class="stat-sub">有効 {{ keywords_summary.enabled }}件 / 無効 {{ keywords_summary.disabled }}件</div>
-                </div>
-            </div>
-            <div class="grid-4" style="margin-top: 16px;">
-                <div class="stat-card">
-                    <div class="stat-title">ゴミ箱件数</div>
-                    <div class="stat-main">{{ trash_stats.count }}<span class="stat-unit">件</span></div>
-                    <div class="stat-sub">保存先: data/trash/</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">ゴミ箱容量</div>
-                    <div class="stat-main">{{ trash_stats.size }}</div>
-                    <div class="stat-sub">30日後削除は未実装</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ■ 運用設定 -->
-        <section class="section">
-            <div class="card">
-                <h2 class="card-title">■ 運用設定</h2>
-                <div class="settings-summary">
-                    <span>Google Drive:
-                        {% if settings.drive.enabled %}
-                        <span class="badge badge-success">ON</span>
-                        {% else %}
-                        <span class="badge badge-secondary">OFF</span>
-                        {% endif %}
-                    </span>
-                    <span>Scheduler:
-                        {% if settings.scheduler.enabled %}
-                        <span class="badge badge-success">ON</span>
-                        {% else %}
-                        <span class="badge badge-secondary">OFF</span>
-                        {% endif %}
-                    </span>
-                    <span>Mode: <strong>{{ settings.scheduler.mode }}</strong></span>
-                    <span>Interval: <strong>{{ settings.scheduler.interval }}</strong></span>
-                    <span>録音対象期間: <strong>
-                        {% if settings.scheduler.lookback_days == 1 %}
-                        昨日のみ
-                        {% else %}
-                        過去{{ settings.scheduler.lookback_days }}日
-                        {% endif %}
-                    </strong></span>
-                    <span>Next planned time: <strong>Day18では未設定</strong></span>
-                </div>
-            </div>
-        </section>
-
-        <!-- ■ 今日録音対象になる番組 -->
-        <section class="section">
-            <div class="card">
-                <h2 class="card-title">■ 今日録音対象になる番組 (本日の自動判定)</h2>
-                {% if today_matched %}
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Station</th>
-                            <th>Start</th>
-                            <th>Program</th>
-                            <th>Matched Rule</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for prog in today_matched %}
-                        <tr>
-                            <td><span class="station-tag">{{ prog.station }}</span></td>
-                            <td><code>{{ prog.start_time }}</code></td>
-                            <td><strong>{{ prog.title }}</strong></td>
-                            <td><span class="badge badge-info">{{ prog.matched_rule }}</span></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+        <div class="stat-card">
+            <div class="stat-title">Google Drive同期状態</div>
+            <div class="stat-main">
+                {% if gdrive.status == 'SUCCESS' %}
+                <span class="badge badge-success">SUCCESS</span>
+                {% elif gdrive.status == 'FAILED' %}
+                <span class="badge badge-danger">FAILED</span>
                 {% else %}
-                <p class="empty-msg">本日ヒットする対象番組はありません。</p>
+                <span class="badge badge-secondary">{{ gdrive.status }}</span>
                 {% endif %}
             </div>
-        </section>
-
-        <!-- ■ 最新録音履歴 -->
-        <section class="section">
-            <div class="card">
-                <h2 class="card-title">■ 最新録音履歴 (最新20件)</h2>
-                {% if recent_recordings %}
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Station</th>
-                            <th>Program</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for rec in recent_recordings %}
-                        <tr>
-                            <td><code>{{ rec.date }}</code></td>
-                            <td><span class="station-tag">{{ rec.station }}</span></td>
-                            <td>{{ rec.program }}</td>
-                            <td><span class="badge badge-success">COMPLETED</span></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                <p class="empty-msg">録音履歴がまだありません。</p>
-                {% endif %}
-            </div>
-        </section>
+            <div class="stat-sub-label">Last Sync</div>
+            <div class="stat-sub-val">{{ gdrive.last_sync }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">録音済み番組数</div>
+            <div class="stat-main">{{ recorded_count }}<span class="stat-unit">件</span></div>
+            <div class="stat-sub">保存ディレクトリ: audio/</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">登録キーワード数</div>
+            <div class="stat-main">{{ keywords_summary.total }}<span class="stat-unit">件</span></div>
+            <div class="stat-sub">有効 {{ keywords_summary.enabled }}件 / 無効 {{ keywords_summary.disabled }}件</div>
+        </div>
     </div>
+    <div class="grid-4" style="margin-top: 16px;">
+        <div class="stat-card">
+            <div class="stat-title">ゴミ箱件数</div>
+            <div class="stat-main">{{ trash_stats.count }}<span class="stat-unit">件</span></div>
+            <div class="stat-sub">保存先: data/trash/</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">ゴミ箱容量</div>
+            <div class="stat-main">{{ trash_stats.size }}</div>
+            <div class="stat-sub">保存容量表示</div>
+        </div>
+    </div>
+</section>
 
-    <!-- dry-run 実行スクリプト -->
-    <script>
-        function executeDryRun() {
-            const wrapper = document.getElementById('dashboard-console-wrapper');
-            const spinner = document.getElementById('loading-spinner');
-            const consoleOutput = document.getElementById('dashboard-console-output');
+<section class="section">
+    <div class="card">
+        <h2 class="card-title">次回録音予定</h2>
+        <div class="settings-summary">
+            <span>Scheduler:
+                {% if settings.scheduler.enabled %}
+                <span class="badge badge-success">ON</span>
+                {% else %}
+                <span class="badge badge-secondary">OFF</span>
+                {% endif %}
+            </span>
+            <span>Mode: <strong>{{ settings.scheduler.mode }}</strong></span>
+            <span>Interval: <strong>{{ settings.scheduler.interval }}</strong></span>
+            <span>録音対象期間: <strong>{% if settings.scheduler.lookback_days == 1 %}今日＋昨日{% else %}今日＋過去{{ settings.scheduler.lookback_days }}日{% endif %}</strong></span>
+            <span>Next planned time: <strong>systemd timer は設定ページで確認</strong></span>
+        </div>
+    </div>
+</section>
 
-            wrapper.style.display = 'block';
-            spinner.style.display = 'inline';
-            consoleOutput.textContent = 'filtered dry-run 処理を実行中... しばらくお待ちください。';
+<section class="section">
+    <div class="card">
+        <h2 class="card-title">最新録音状況</h2>
+        {% if today_matched %}
+        <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Station</th>
+                    <th>Start</th>
+                    <th>Program</th>
+                    <th>Matched Rule</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for prog in today_matched %}
+                <tr>
+                    <td><span class="station-tag">{{ prog.station }}</span></td>
+                    <td><code>{{ prog.start_time }}</code></td>
+                    <td><strong>{{ prog.title }}</strong></td>
+                    <td><span class="badge badge-info">{{ prog.matched_rule }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="empty-msg">本日ヒットする対象番組はありません。</p>
+        {% endif %}
+    </div>
+</section>
 
-            fetch("{{ url_for('run_dry_run') }}", {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(response => response.json())
-            .then(data => {
-                spinner.style.display = 'none';
-                if (data.success) {
-                    consoleOutput.textContent = data.output;
-                } else {
-                    consoleOutput.textContent = 'エラー: ' + data.output;
-                }
-            })
-            .catch(error => {
-                spinner.style.display = 'none';
-                consoleOutput.textContent = '通信エラーが発生しました: ' + error;
-            });
-        }
-    </script>
-</body>
-</html>
+<section class="section">
+    <div class="card">
+        <h2 class="card-title">直近ログ概要 / 録音履歴</h2>
+        {% if recent_recordings %}
+        <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Station</th>
+                    <th>Program</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rec in recent_recordings %}
+                <tr>
+                    <td><code>{{ rec.date }}</code></td>
+                    <td><span class="station-tag">{{ rec.station }}</span></td>
+                    <td>{{ rec.program }}</td>
+                    <td><span class="badge badge-success">COMPLETED</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="empty-msg">録音履歴がまだありません。</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function executeDryRun() {
+        const wrapper = document.getElementById('dashboard-console-wrapper');
+        const spinner = document.getElementById('loading-spinner');
+        const consoleOutput = document.getElementById('dashboard-console-output');
+
+        wrapper.style.display = 'block';
+        spinner.style.display = 'inline';
+        consoleOutput.textContent = 'filtered dry-run 処理を実行中... しばらくお待ちください。';
+
+        fetch("{{ url_for('run_dry_run') }}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            spinner.style.display = 'none';
+            consoleOutput.textContent = data.success ? data.output : 'エラー: ' + data.output;
+        })
+        .catch(error => {
+            spinner.style.display = 'none';
+            consoleOutput.textContent = '通信エラーが発生しました: ' + error;
+        });
+    }
+</script>
+{% endblock %}

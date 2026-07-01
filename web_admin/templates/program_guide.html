@@ -1,167 +1,150 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>こえラジオ アーカイブ - 番組表 (Program Guide)</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <!-- ヘッダーエリア -->
-        <header>
-            <div class="nav-bar">
-                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
-                <a href="{{ url_for('manual_recording_page') }}" class="btn btn-outline" style="border-color: #ef4444; color: #f87171;">🎙️ Manual Rec</a>
-                <a href="{{ url_for('recordings_page') }}" class="btn btn-outline" style="border-color: #8b5cf6; color: #a78bfa;">🎵 Recordings</a>
-                <a href="{{ url_for('rules_page') }}" class="btn btn-outline">📋 Rules</a>
-                <a href="{{ url_for('stations_page') }}" class="btn btn-outline">📻 Stations</a>
-            </div>
-            <h1>番組表一覧 (Program Guide)</h1>
-            <p>放送局と日付を指定して radiko 番組表を取得・閲覧し、個別に番組の録音が行えます</p>
-        </header>
+{% extends "base.html" %}
 
-        <!-- 通知メッセージ表示エリア -->
-        <div id="api-message-box" style="display: none; margin-bottom: 20px; padding: 12px 16px; border-radius: 6px; font-weight: 600;"></div>
-        {% if message %}
-        <div class="alert alert-{{ message_type }}" style="margin-bottom: 20px; padding: 12px 16px; border-radius: 6px; font-weight: 600;
-            {% if message_type == 'danger' %}background-color: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;{% endif %}">
-            {{ message }}
-        </div>
-        {% endif %}
+{% block title %}KoeRadi Archive Server - 番組表{% endblock %}
+{% block page_title %}番組表{% endblock %}
+{% block page_description %}放送局と日付を指定して radiko 番組表を取得し、個別録音を実行します{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('jobs_page') }}" class="btn btn-outline">録音管理</a>
+<a href="{{ url_for('manual_recording_page') }}" class="btn btn-outline">手動録音</a>
+{% endblock %}
 
-        <!-- 番組表検索フォーム -->
-        <div class="card search-card">
-            <form action="{{ url_for('program_guide_page') }}" method="POST" class="filter-form">
-                <div class="filter-group">
-                    <label for="date">日付</label>
-                    <input type="date" id="date" name="date" value="{{ selected_date }}" required class="form-control">
-                </div>
+{% block content %}
+<div id="api-message-box" style="display: none; margin-bottom: 20px; padding: 12px 16px; border-radius: 6px; font-weight: 600;"></div>
 
-                <div class="filter-group">
-                    <label for="station">放送局</label>
-                    <select id="station" name="station" class="form-control">
-                        {% for st in enabled_stations %}
-                        <option value="{{ st.station_id }}" {% if selected_station == st.station_id %}selected{% endif %}>{{ st.station_name }} ({{ st.station_id }})</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-buttons">
-                    <button type="submit" class="btn btn-primary" style="background-color: #0284c7;">📅 番組表取得</button>
-                </div>
-            </form>
+<div class="card search-card">
+    <form action="{{ url_for('program_guide_page') }}" method="POST" class="filter-form">
+        <div class="filter-group">
+            <label for="date">日付</label>
+            <input type="date" id="date" name="date" value="{{ selected_date }}" required class="form-control">
         </div>
 
-        <!-- 番組表一覧表示テーブル -->
-        <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h2 class="card-title" style="margin: 0; border-bottom: none;">【{{ station_name }}】 {{ selected_date }} 番組表 (全 {{ guide_items|length }} 件)</h2>
-            </div>
-            
-            {% if guide_items %}
-            <div style="overflow-x: auto;">
-                <table class="data-table" style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem;">
-                    <thead>
-                        <tr style="background-color: #f1f5f9; text-align: left;">
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1; width: 110px;">時間</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1; width: 220px;">番組名</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1; width: 180px;">出演者 / パーソナリティ</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">説明</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1; width: 90px;">録音状態</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1; width: 110px;">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in guide_items %}
-                        <tr style="border-bottom: 1px solid #e2e8f0;">
-                            <td style="padding: 10px; font-weight: 600; white-space: nowrap; color: #475569;">
-                                {{ item.start_time }} 〜 {{ item.end_time }}
-                            </td>
-                            <td style="padding: 10px; font-weight: 700; color: var(--text-main);">
-                                {{ item.title }}
-                            </td>
-                            <td style="padding: 10px; color: #334155; font-size: 0.85rem;">
-                                {{ item.personality if item.personality else '-' }}
-                            </td>
-                            <td style="padding: 10px; color: #64748b; font-size: 0.8rem; max-width: 300px;">
-                                <div style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;" title="{{ item.description }}">
-                                    {{ item.description if item.description else '-' }}
-                                </div>
-                            </td>
-                            <td style="padding: 10px; white-space: nowrap;">
-                                {% if item.recorded %}
-                                <span class="badge badge-success" style="background-color: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 700;">録音済み</span>
-                                {% else %}
-                                <span class="badge badge-secondary" style="background-color: #94a3b8; color: white; padding: 4px 8px; border-radius: 4px;">未録音</span>
-                                {% endif %}
-                            </td>
-                            <td style="padding: 10px; white-space: nowrap;">
-                                {% if item.recorded %}
-                                <button class="btn btn-outline" disabled style="opacity: 0.5; cursor: not-allowed; padding: 4px 8px; font-size: 0.8rem;">録音済み</button>
-                                {% else %}
-                                <button type="button" class="btn btn-primary" style="padding: 4px 10px; font-size: 0.8rem; background-color: #10b981;" 
-                                    onclick="recordSingle('{{ selected_station }}', '{{ selected_date }}', '{{ item.start_datetime }}', '{{ item.duration }}', '{{ item.title|replace('\'', '\\\'') }}', '{{ item.personality|replace('\'', '\\\'') }}', this)">
-                                    🎙️ 今すぐ録音
-                                </button>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p style="color: #64748b; padding: 20px 0;">番組表データが見つかりませんでした。「番組表取得」ボタンを押して再取得を行ってください。</p>
-            {% endif %}
+        <div class="filter-group">
+            <label for="station">放送局</label>
+            <select id="station" name="station" class="form-control">
+                {% for st in enabled_stations %}
+                <option value="{{ st.station_id }}" {% if selected_station == st.station_id %}selected{% endif %}>{{ st.station_name }} ({{ st.station_id }})</option>
+                {% endfor %}
+            </select>
         </div>
+
+        <div class="filter-buttons">
+            <button type="submit" class="btn btn-primary">番組表取得</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-title-row">
+        <h2 class="card-title">【{{ station_name }}】 {{ selected_date }} 番組表 (全 {{ guide_items|length }} 件)</h2>
     </div>
 
-    <script>
-        function recordSingle(station, dateStr, startStr, duration, title, personality, btnObj) {
-            if (!confirm(`番組「${title}」の録音を開始します。よろしいですか？`)) {
-                return;
-            }
-            btnObj.disabled = true;
-            btnObj.textContent = "⏳ 起動中...";
-            
-            const formData = new FormData();
-            formData.append('station', station);
-            formData.append('date', dateStr);
-            formData.append('start', startStr);
-            formData.append('duration', duration);
-            formData.append('title', title);
-            formData.append('personality', personality);
+    {% if guide_items %}
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>時間</th>
+                    <th>番組名</th>
+                    <th>出演者</th>
+                    <th>説明</th>
+                    <th>録音状態</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in guide_items %}
+                <tr>
+                    <td><strong>{{ item.start_time }} - {{ item.end_time }}</strong></td>
+                    <td><strong>{{ item.title }}</strong></td>
+                    <td>{{ item.personality if item.personality else '-' }}</td>
+                    <td class="description-cell" title="{{ item.description }}">{{ item.description if item.description else '-' }}</td>
+                    <td>
+                        {% if item.recorded %}
+                        <span class="badge badge-success">録音済み</span>
+                        {% else %}
+                        <span class="badge badge-secondary">未録音</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.recorded %}
+                        <button class="btn btn-outline" disabled>録音済み</button>
+                        {% else %}
+                        <button type="button" class="btn btn-primary"
+                            data-station="{{ selected_station }}"
+                            data-date="{{ selected_date }}"
+                            data-start="{{ item.start_datetime }}"
+                            data-duration="{{ item.duration }}"
+                            data-title="{{ item.title }}"
+                            data-personality="{{ item.personality }}"
+                            onclick="recordSingleFromButton(this)">
+                            今すぐ録音
+                        </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-msg">番組表データが見つかりませんでした。「番組表取得」ボタンを押して再取得を行ってください。</p>
+    {% endif %}
+</div>
+{% endblock %}
 
-            fetch('/api/record-single', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                const box = document.getElementById('api-message-box');
-                box.style.display = 'block';
-                if (data.success) {
-                    box.style.backgroundColor = '#d1fae5';
-                    box.style.color = '#065f46';
-                    box.style.border = '1px solid #a7f3d0';
-                    box.textContent = data.message;
-                    btnObj.textContent = "⚙️ 録音中";
-                } else {
-                    box.style.backgroundColor = '#fee2e2';
-                    box.style.color = '#991b1b';
-                    box.style.border = '1px solid #fca5a5';
-                    box.textContent = data.message;
-                    btnObj.disabled = false;
-                    btnObj.textContent = "🎙️ 今すぐ録音";
-                }
-            })
-            .catch(err => {
-                alert('エラーが発生しました: ' + err);
-                btnObj.disabled = false;
-                btnObj.textContent = "🎙️ 今すぐ録音";
-            });
+{% block scripts %}
+<script>
+    function recordSingleFromButton(btnObj) {
+        recordSingle(
+            btnObj.dataset.station,
+            btnObj.dataset.date,
+            btnObj.dataset.start,
+            btnObj.dataset.duration,
+            btnObj.dataset.title,
+            btnObj.dataset.personality,
+            btnObj
+        );
+    }
+
+    function recordSingle(station, dateStr, startStr, duration, title, personality, btnObj) {
+        if (!confirm(`番組「${title}」の録音を開始します。よろしいですか？`)) {
+            return;
         }
-    </script>
-</body>
-</html>
+        btnObj.disabled = true;
+        btnObj.textContent = "起動中...";
+
+        const formData = new FormData();
+        formData.append('station', station);
+        formData.append('date', dateStr);
+        formData.append('start', startStr);
+        formData.append('duration', duration);
+        formData.append('title', title);
+        formData.append('personality', personality);
+
+        fetch('/api/record-single', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            const box = document.getElementById('api-message-box');
+            box.style.display = 'block';
+            if (data.success) {
+                box.className = 'alert alert-success';
+                box.textContent = data.message;
+                btnObj.textContent = "録音中";
+            } else {
+                box.className = 'alert alert-danger';
+                box.textContent = data.message;
+                btnObj.disabled = false;
+                btnObj.textContent = "今すぐ録音";
+            }
+        })
+        .catch(err => {
+            alert('エラーが発生しました: ' + err);
+            btnObj.disabled = false;
+            btnObj.textContent = "今すぐ録音";
+        });
+    }
+</script>
+{% endblock %}

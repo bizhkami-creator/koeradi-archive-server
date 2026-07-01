@@ -1,182 +1,166 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>こえラジオ アーカイブ - 録音一覧 (Recordings)</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <!-- ヘッダーエリア -->
-        <header>
-            <div class="nav-bar">
-                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
-                <a href="{{ url_for('program_guide_page') }}" class="btn btn-outline" style="border-color: #0284c7; color: #38bdf8;">📅 Program Guide</a>
-                <a href="{{ url_for('manual_recording_page') }}" class="btn btn-outline" style="border-color: #ef4444; color: #f87171;">🎙️ Manual Rec</a>
-                <a href="{{ url_for('rules_page') }}" class="btn btn-outline">📋 Rules</a>
-                <a href="{{ url_for('stations_page') }}" class="btn btn-outline">📻 Stations</a>
-            </div>
-            <h1>録音ファイル一覧 (Recordings)</h1>
-            <p>保存された録音データの閲覧、検索、およびブラウザ再生が行えます</p>
-        </header>
+{% extends "base.html" %}
 
-        <!-- 検索・絞り込みフォーム -->
-        <div class="card search-card">
-            <form action="{{ url_for('recordings_page') }}" method="GET" class="filter-form">
-                <div class="filter-group">
-                    <label for="station">放送局</label>
-                    <select id="station" name="station" class="form-control">
-                        <option value="">すべての放送局</option>
-                        {% for st in stations %}
-                        <option value="{{ st }}" {% if selected_station == st %}selected{% endif %}>{{ st }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+{% block title %}KoeRadi Archive Server - ファイル管理{% endblock %}
+{% block page_title %}ファイル管理{% endblock %}
+{% block page_description %}録音ファイル一覧、ファイル検索、ファイル削除、保存容量を確認します{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('recordings_page') }}" class="btn btn-outline">録音履歴</a>
+{% endblock %}
 
-                <div class="filter-group">
-                    <label for="date">日付</label>
-                    <select id="date" name="date" class="form-control">
-                        <option value="">すべての日付</option>
-                        {% for d in dates %}
-                        <option value="{{ d }}" {% if selected_date == d %}selected{% endif %}>{{ d }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="filter-group filter-group-grow">
-                    <label for="q">キーワード検索</label>
-                    <input type="text" id="q" name="q" value="{{ query }}" placeholder="番組名・ファイル名で検索..." class="form-control">
-                </div>
-
-                <div class="filter-buttons">
-                    <button type="submit" class="btn btn-primary" style="background-color: #8b5cf6;">🔍 検索</button>
-                    <a href="{{ url_for('recordings_page') }}" class="btn btn-outline">リセット</a>
-                </div>
-            </form>
-        </div>
-
-        <!-- 検索結果ヘッダー -->
-        <div class="results-summary">
-            <span>該当件数: <strong>{{ total_count }}</strong> 件</span>
-        </div>
-
-        {% if deleted_count %}
-        <div class="alert alert-success">
-            {{ deleted_count }} 件の録音ファイルを trash へ移動しました。
-            {% if trash_dir %}保存先: data/{{ trash_dir }}{% endif %}
-        </div>
-        {% endif %}
-
-        {% if delete_errors %}
-        <div class="alert alert-warning">
-            {{ delete_errors }}
-        </div>
-        {% endif %}
-
-        <!-- 録音ファイル一覧 (カード形式) -->
-        {% if recordings %}
-        <form action="{{ url_for('delete_recordings') }}" method="POST" id="delete-recordings-form">
-            <div class="bulk-actions card">
-                <label class="select-all-label">
-                    <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings(this)">
-                    全選択
-                </label>
-                <span id="selected-count">選択: 0 件</span>
-            </div>
-
-            <div class="recordings-grid">
-                {% for item in recordings %}
-                <div class="recording-card card">
-                    <div class="recording-select-row">
-                        <label>
-                            <input type="checkbox" name="recording_paths" value="{{ item.relative_path }}" class="recording-checkbox" onchange="updateSelectedCount()">
-                            削除対象にする
-                        </label>
-                    </div>
-                    <div class="card-header-row">
-                        <span class="badge badge-station">{{ item.station_name }}</span>
-                        <span class="recording-date">📅 {{ item.date }}</span>
-                    </div>
-                    <h3 class="program-title">{{ item.program_name }}</h3>
-                    {% if item.personality %}
-                    <div class="personality-row">{{ item.personality }}</div>
-                    {% endif %}
-                    <div class="file-info-row">
-                        <span class="file-name" title="{{ item.file_name }}">📄 {{ item.file_name }}</span>
-                        <span class="file-size">💾 {{ item.file_size }}</span>
-                    </div>
-                    <div class="audio-player-wrapper">
-                        <audio controls preload="none" class="audio-player">
-                            <source src="/{{ item.relative_path }}" type="audio/mp4">
-                            お使いのブラウザは音声再生に対応していません。
-                        </audio>
-                    </div>
-                </div>
+{% block content %}
+<div class="card search-card">
+    <form action="{{ url_for('files_page') }}" method="GET" class="filter-form">
+        <div class="filter-group">
+            <label for="station">放送局</label>
+            <select id="station" name="station" class="form-control">
+                <option value="">すべての放送局</option>
+                {% for st in stations %}
+                <option value="{{ st }}" {% if selected_station == st %}selected{% endif %}>{{ st }}</option>
                 {% endfor %}
-            </div>
-
-            <div class="delete-actions card">
-                <label class="drive-delete-label">
-                    <input type="checkbox" name="delete_drive" id="delete-drive">
-                    Google Driveも削除する
-                </label>
-                <button type="submit" class="btn btn-danger">削除</button>
-                <p class="settings-help">削除対象は完全削除せず、まず data/trash/YYYY-MM-DD_HHMMSS/ へ移動します。</p>
-            </div>
-        </form>
-        {% else %}
-        <div class="card empty-card">
-            <p>条件に一致する録音ファイルが見つかりませんでした。</p>
+            </select>
         </div>
-        {% endif %}
+
+        <div class="filter-group">
+            <label for="date">日付</label>
+            <select id="date" name="date" class="form-control">
+                <option value="">すべての日付</option>
+                {% for d in dates %}
+                <option value="{{ d }}" {% if selected_date == d %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="filter-group filter-group-grow">
+            <label for="q">ファイル検索</label>
+            <input type="text" id="q" name="q" value="{{ query }}" placeholder="番組名・ファイル名で検索..." class="form-control">
+        </div>
+
+        <div class="filter-buttons">
+            <button type="submit" class="btn btn-primary">検索</button>
+            <a href="{{ url_for('files_page') }}" class="btn btn-outline">リセット</a>
+        </div>
+    </form>
+</div>
+
+<div class="results-summary">
+    <span>該当件数: <strong>{{ total_count }}</strong> 件</span>
+</div>
+
+{% if deleted_count %}
+<div class="alert alert-success">
+    {{ deleted_count }} 件の録音ファイルを trash へ移動しました。
+    {% if trash_dir %}保存先: data/{{ trash_dir }}{% endif %}
+</div>
+{% endif %}
+
+{% if delete_errors %}
+<div class="alert alert-warning">
+    {{ delete_errors }}
+</div>
+{% endif %}
+
+{% if recordings %}
+<form action="{{ url_for('delete_recordings') }}" method="POST" id="delete-recordings-form">
+    <div class="bulk-actions card">
+        <label class="select-all-label">
+            <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings(this)">
+            全選択
+        </label>
+        <span id="selected-count">選択: 0 件</span>
     </div>
 
-    <script>
-        function getSelectedCheckboxes() {
-            return Array.from(document.querySelectorAll('.recording-checkbox:checked'));
-        }
+    <div class="recordings-grid">
+        {% for item in recordings %}
+        <div class="recording-card card">
+            <div class="recording-select-row">
+                <label>
+                    <input type="checkbox" name="recording_paths" value="{{ item.relative_path }}" class="recording-checkbox" onchange="updateSelectedCount()">
+                    削除対象にする
+                </label>
+            </div>
+            <div class="card-header-row">
+                <span class="badge badge-station">{{ item.station_name }}</span>
+                <span class="recording-date">{{ item.date }}</span>
+            </div>
+            <h3 class="program-title">{{ item.program_name }}</h3>
+            {% if item.personality %}
+            <div class="personality-row">{{ item.personality }}</div>
+            {% endif %}
+            <div class="file-info-row">
+                <span class="file-name" title="{{ item.file_name }}">{{ item.file_name }}</span>
+                <span class="file-size">{{ item.file_size }}</span>
+            </div>
+            <div class="audio-player-wrapper">
+                <audio controls preload="none" class="audio-player">
+                    <source src="/{{ item.relative_path }}" type="audio/mp4">
+                    お使いのブラウザは音声再生に対応していません。
+                </audio>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
 
-        function updateSelectedCount() {
+    <div class="delete-actions card">
+        <label class="drive-delete-label">
+            <input type="checkbox" name="delete_drive" id="delete-drive">
+            Google Driveも削除する
+        </label>
+        <button type="submit" class="btn btn-danger">削除</button>
+        <p class="settings-help">削除対象は完全削除せず、まず data/trash/YYYY-MM-DD_HHMMSS/ へ移動します。</p>
+    </div>
+</form>
+{% else %}
+<div class="card empty-card">
+    <p>条件に一致する録音ファイルが見つかりませんでした。</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function getSelectedCheckboxes() {
+        return Array.from(document.querySelectorAll('.recording-checkbox:checked'));
+    }
+
+    function updateSelectedCount() {
+        const count = getSelectedCheckboxes().length;
+        const selectedCount = document.getElementById('selected-count');
+        const selectAll = document.getElementById('select-all-recordings');
+        const allBoxes = document.querySelectorAll('.recording-checkbox');
+
+        if (selectedCount) {
+            selectedCount.textContent = '選択: ' + count + ' 件';
+        }
+        if (selectAll) {
+            selectAll.checked = allBoxes.length > 0 && count === allBoxes.length;
+            selectAll.indeterminate = count > 0 && count < allBoxes.length;
+        }
+    }
+
+    function toggleAllRecordings(source) {
+        document.querySelectorAll('.recording-checkbox').forEach((checkbox) => {
+            checkbox.checked = source.checked;
+        });
+        updateSelectedCount();
+    }
+
+    const deleteForm = document.getElementById('delete-recordings-form');
+    if (deleteForm) {
+        deleteForm.addEventListener('submit', function(event) {
             const count = getSelectedCheckboxes().length;
-            const selectedCount = document.getElementById('selected-count');
-            const selectAll = document.getElementById('select-all-recordings');
-            const allBoxes = document.querySelectorAll('.recording-checkbox');
-
-            if (selectedCount) {
-                selectedCount.textContent = '選択: ' + count + ' 件';
+            if (count === 0) {
+                alert('削除対象を選択してください。');
+                event.preventDefault();
+                return;
             }
-            if (selectAll) {
-                selectAll.checked = allBoxes.length > 0 && count === allBoxes.length;
-                selectAll.indeterminate = count > 0 && count < allBoxes.length;
+
+            const drive = document.getElementById('delete-drive').checked;
+            const message = '本当に削除しますか？\n\n対象\n' + count + '件\n\nGoogle Drive削除: ' + (drive ? 'あり' : 'なし');
+            if (!confirm(message)) {
+                event.preventDefault();
             }
-        }
-
-        function toggleAllRecordings(source) {
-            document.querySelectorAll('.recording-checkbox').forEach((checkbox) => {
-                checkbox.checked = source.checked;
-            });
-            updateSelectedCount();
-        }
-
-        const deleteForm = document.getElementById('delete-recordings-form');
-        if (deleteForm) {
-            deleteForm.addEventListener('submit', function(event) {
-                const count = getSelectedCheckboxes().length;
-                if (count === 0) {
-                    alert('削除対象を選択してください。');
-                    event.preventDefault();
-                    return;
-                }
-
-                const drive = document.getElementById('delete-drive').checked;
-                const message = '本当に削除しますか？\n\n対象\n' + count + '件\n\nGoogle Drive削除: ' + (drive ? 'あり' : 'なし');
-                if (!confirm(message)) {
-                    event.preventDefault();
-                }
-            });
-            updateSelectedCount();
-        }
-    </script>
-</body>
-</html>
+        });
+        updateSelectedCount();
+    }
+</script>
+{% endblock %}

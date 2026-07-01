@@ -20,3 +20,9 @@ rules:
 - name: 伊集院
   keyword: 伊集院
   enabled: true
+- name: Creepy
+  keyword: Creepy
+  enabled: true
+- name: 辛坊
+  keyword: 辛坊
+  enabled: true

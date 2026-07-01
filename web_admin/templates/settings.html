@@ -1,225 +1,196 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>こえラジオ アーカイブ - Settings</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <header>
-            <div class="nav-bar">
-                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
-                <a href="{{ url_for('program_guide_page') }}" class="btn btn-outline" style="border-color: #0284c7; color: #38bdf8;">Program Guide</a>
-                <a href="{{ url_for('manual_recording_page') }}" class="btn btn-outline" style="border-color: #ef4444; color: #f87171;">Manual Rec</a>
-                <a href="{{ url_for('recordings_page') }}" class="btn btn-outline" style="border-color: #8b5cf6; color: #a78bfa;">Recordings</a>
-                <a href="{{ url_for('rules_page') }}" class="btn btn-outline">Rules</a>
-                <a href="{{ url_for('stations_page') }}" class="btn btn-outline">Stations</a>
-            </div>
-            <h1>Settings</h1>
-            <p>Google Drive同期、Scheduler設定、運用テストジョブを管理します</p>
-        </header>
+{% extends "base.html" %}
 
-        {% if message %}
-        <div class="alert alert-{{ message_type }}">
-            {{ message }}
-        </div>
+{% block title %}KoeRadi Archive Server - 設定{% endblock %}
+{% block page_title %}設定{% endblock %}
+{% block page_description %}Radiko設定、保存先設定、録音対象期間設定、ログ設定を管理します{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('stations_page') }}" class="btn btn-outline">Radiko放送局</a>
+<a href="{{ url_for('logs_page') }}" class="btn btn-outline">ログ確認</a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">Radiko設定</h2>
+    <p class="settings-help">録音対象の放送局は Radiko 放送局設定で管理します。</p>
+    <a href="{{ url_for('stations_page') }}" class="btn btn-outline">放送局設定を開く</a>
+</div>
+
+<div class="card">
+    <h2 class="card-title">保存先設定</h2>
+    <form action="{{ url_for('settings_page') }}" method="POST" class="settings-form">
+        <input type="hidden" name="action" value="save_settings">
+        <input type="hidden" name="scheduler_mode" value="{{ settings.scheduler.mode }}">
+        <input type="hidden" name="scheduler_interval" value="{{ settings.scheduler.interval }}">
+        <input type="hidden" name="scheduler_hour" value="{{ settings.scheduler.hour }}">
+        <input type="hidden" name="scheduler_minute" value="{{ settings.scheduler.minute }}">
+        <input type="hidden" name="scheduler_lookback_days" value="{{ settings.scheduler.lookback_days }}">
+        {% if settings.scheduler.enabled %}
+        <input type="hidden" name="scheduler_enabled" value="on">
         {% endif %}
 
-        <div class="card">
-            <h2 class="card-title">Google Drive</h2>
-            <form action="{{ url_for('settings_page') }}" method="POST" class="settings-form">
-                <input type="hidden" name="action" value="save_settings">
-                <input type="hidden" name="scheduler_mode" value="{{ settings.scheduler.mode }}">
-                <input type="hidden" name="scheduler_interval" value="{{ settings.scheduler.interval }}">
-                <input type="hidden" name="scheduler_hour" value="{{ settings.scheduler.hour }}">
-                <input type="hidden" name="scheduler_minute" value="{{ settings.scheduler.minute }}">
-                <input type="hidden" name="scheduler_lookback_days" value="{{ settings.scheduler.lookback_days }}">
-                {% if settings.scheduler.enabled %}
-                <input type="hidden" name="scheduler_enabled" value="on">
-                {% endif %}
-
-                <div class="settings-row">
-                    <div>
-                        <div class="settings-label">同期</div>
-                        <div class="settings-help">OFF の場合、Web操作と自動同期経路では Google Drive 同期を実行しません。</div>
-                    </div>
-                    <label class="switch-label">
-                        <input type="checkbox" name="drive_enabled" {% if settings.drive.enabled %}checked{% endif %}>
-                        <span>有効</span>
-                    </label>
-                </div>
-
-                <div class="settings-summary">
-                    <span>現在の状態:
-                        {% if settings.drive.enabled %}
-                        <span class="badge badge-success">ON</span>
-                        {% else %}
-                        <span class="badge badge-secondary">OFF</span>
-                        {% endif %}
-                    </span>
-                    <span>最後の同期時刻: <strong>{{ gdrive.last_sync }}</strong></span>
-                    <span>同期結果: <strong>{{ gdrive.status }}</strong></span>
-                </div>
-
-                <div class="form-buttons">
-                    <button type="submit" class="btn btn-primary">Google Drive設定を保存</button>
-                </div>
-            </form>
-
-            <form action="{{ url_for('settings_page') }}" method="POST" style="margin-top: 12px;">
-                <input type="hidden" name="action" value="sync_now">
-                <button type="submit" class="btn btn-primary">今すぐ同期</button>
-                {% if not settings.drive.enabled %}
-                <span class="settings-disabled-msg">Google Drive同期は無効です。</span>
-                {% endif %}
-            </form>
+        <div class="settings-row">
+            <div>
+                <div class="settings-label">Google Drive同期</div>
+                <div class="settings-help">OFF の場合、Web操作と自動同期経路では Google Drive 同期を実行しません。</div>
+            </div>
+            <label class="switch-label">
+                <input type="checkbox" name="drive_enabled" {% if settings.drive.enabled %}checked{% endif %}>
+                <span>有効</span>
+            </label>
         </div>
 
-        <div class="card">
-            <h2 class="card-title">Scheduler</h2>
-            <form action="{{ url_for('settings_page') }}" method="POST" class="settings-form">
-                <input type="hidden" name="action" value="save_settings">
+        <div class="settings-summary">
+            <span>現在の状態:
                 {% if settings.drive.enabled %}
-                <input type="hidden" name="drive_enabled" value="on">
+                <span class="badge badge-success">ON</span>
+                {% else %}
+                <span class="badge badge-secondary">OFF</span>
                 {% endif %}
+            </span>
+            <span>最後の同期時刻: <strong>{{ gdrive.last_sync }}</strong></span>
+            <span>同期結果: <strong>{{ gdrive.status }}</strong></span>
+        </div>
 
-                <div class="settings-row">
-                    <div>
-                        <div class="settings-label">Scheduler</div>
-                        <div class="settings-help">systemd timer から scheduled_recording.py を起動します。interval/hour/minute は設定ファイルに保存されます。</div>
-                    </div>
-                    <label class="switch-label">
-                        <input type="checkbox" name="scheduler_enabled" {% if settings.scheduler.enabled %}checked{% endif %}>
-                        <span>有効</span>
-                    </label>
-                </div>
+        <button type="submit" class="btn btn-primary">保存先設定を保存</button>
+    </form>
 
-                <div class="settings-grid">
-                    <div class="form-group">
-                        <label for="scheduler_mode">実行モード</label>
-                        <select id="scheduler_mode" name="scheduler_mode" class="form-control">
-                            {% for mode in scheduler_modes %}
-                            <option value="{{ mode }}" {% if settings.scheduler.mode == mode %}selected{% endif %}>{{ mode }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+    <form action="{{ url_for('settings_page') }}" method="POST" style="margin-top: 12px;">
+        <input type="hidden" name="action" value="sync_now">
+        <button type="submit" class="btn btn-primary">今すぐ同期</button>
+        {% if not settings.drive.enabled %}
+        <span class="settings-disabled-msg">Google Drive同期は無効です。</span>
+        {% endif %}
+    </form>
+</div>
 
-                    <div class="form-group">
-                        <label for="scheduler_interval">実行間隔</label>
-                        <select id="scheduler_interval" name="scheduler_interval" class="form-control">
-                            <option value="hourly" {% if settings.scheduler.interval == 'hourly' %}selected{% endif %}>1時間ごと</option>
-                            <option value="every_6_hours" {% if settings.scheduler.interval == 'every_6_hours' %}selected{% endif %}>6時間ごと</option>
-                            <option value="daily" {% if settings.scheduler.interval == 'daily' %}selected{% endif %}>毎日</option>
-                            <option value="weekly" {% if settings.scheduler.interval == 'weekly' %}selected{% endif %}>毎週</option>
-                        </select>
-                    </div>
+<div class="card">
+    <h2 class="card-title">録音対象期間設定</h2>
+    <form action="{{ url_for('settings_page') }}" method="POST" class="settings-form">
+        <input type="hidden" name="action" value="save_settings">
+        {% if settings.drive.enabled %}
+        <input type="hidden" name="drive_enabled" value="on">
+        {% endif %}
 
-                    <div class="form-group">
-                        <label for="scheduler_hour">hour</label>
-                        <input type="number" id="scheduler_hour" name="scheduler_hour" min="0" max="23" value="{{ settings.scheduler.hour }}" class="form-control">
-                    </div>
+        <div class="settings-row">
+            <div>
+                <div class="settings-label">Scheduler</div>
+                <div class="settings-help">systemd timer から scheduled_recording.py を起動します。</div>
+            </div>
+            <label class="switch-label">
+                <input type="checkbox" name="scheduler_enabled" {% if settings.scheduler.enabled %}checked{% endif %}>
+                <span>有効</span>
+            </label>
+        </div>
 
-                    <div class="form-group">
-                        <label for="scheduler_minute">minute</label>
-                        <input type="number" id="scheduler_minute" name="scheduler_minute" min="0" max="59" value="{{ settings.scheduler.minute }}" class="form-control">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="scheduler_lookback_days">録音対象期間</label>
-                        <select id="scheduler_lookback_days" name="scheduler_lookback_days" class="form-control">
-                            <option value="1" {% if settings.scheduler.lookback_days == 1 %}selected{% endif %}>昨日のみ</option>
-                            <option value="3" {% if settings.scheduler.lookback_days == 3 %}selected{% endif %}>過去3日</option>
-                            <option value="7" {% if settings.scheduler.lookback_days == 7 %}selected{% endif %}>過去7日</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-buttons">
-                    <button type="submit" class="btn btn-primary">Scheduler設定を保存</button>
-                </div>
-            </form>
-
-            <div class="job-status-box">
-                <h3>Scheduler systemd status</h3>
-                <div class="settings-summary">
-                    <span>Scheduler service status:
-                        {% if scheduler_status.service_ok %}
-                        <span class="badge badge-success">{{ scheduler_status.service_status }}</span>
-                        {% else %}
-                        <span class="badge badge-secondary">{{ scheduler_status.service_status }}</span>
-                        {% endif %}
-                    </span>
-                    <span>Timer status:
-                        {% if scheduler_status.timer_ok %}
-                        <span class="badge badge-success">{{ scheduler_status.timer_status }}</span>
-                        {% else %}
-                        <span class="badge badge-secondary">{{ scheduler_status.timer_status }}</span>
-                        {% endif %}
-                    </span>
-                    <span>Next run time: <strong>{{ scheduler_status.next_run_time }}</strong></span>
-                </div>
-                <div class="settings-command">Timer detail:</div>
-                <pre class="console-box">{{ scheduler_status.timer_list }}</pre>
-                <div class="settings-command">Last run log:</div>
-                <pre class="console-box">{{ scheduler_status.last_run_log }}</pre>
+        <div class="settings-grid">
+            <div class="form-group">
+                <label for="scheduler_mode">実行モード</label>
+                <select id="scheduler_mode" name="scheduler_mode" class="form-control">
+                    {% for mode in scheduler_modes %}
+                    <option value="{{ mode }}" {% if settings.scheduler.mode == mode %}selected{% endif %}>{{ mode }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="scheduler_interval">実行間隔</label>
+                <select id="scheduler_interval" name="scheduler_interval" class="form-control">
+                    <option value="hourly" {% if settings.scheduler.interval == 'hourly' %}selected{% endif %}>1時間ごと</option>
+                    <option value="every_6_hours" {% if settings.scheduler.interval == 'every_6_hours' %}selected{% endif %}>6時間ごと</option>
+                    <option value="daily" {% if settings.scheduler.interval == 'daily' %}selected{% endif %}>毎日</option>
+                    <option value="weekly" {% if settings.scheduler.interval == 'weekly' %}selected{% endif %}>毎週</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="scheduler_hour">hour</label>
+                <input type="number" id="scheduler_hour" name="scheduler_hour" min="0" max="23" value="{{ settings.scheduler.hour }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="scheduler_minute">minute</label>
+                <input type="number" id="scheduler_minute" name="scheduler_minute" min="0" max="59" value="{{ settings.scheduler.minute }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="scheduler_lookback_days">録音対象期間</label>
+                <select id="scheduler_lookback_days" name="scheduler_lookback_days" class="form-control">
+                    <option value="1" {% if settings.scheduler.lookback_days == 1 %}selected{% endif %}>今日＋昨日</option>
+                    <option value="3" {% if settings.scheduler.lookback_days == 3 %}selected{% endif %}>今日＋過去3日</option>
+                    <option value="7" {% if settings.scheduler.lookback_days == 7 %}selected{% endif %}>今日＋過去7日</option>
+                </select>
             </div>
         </div>
 
-        <div class="card">
-            <h2 class="card-title">Test</h2>
-            <div class="test-actions">
-                <form action="{{ url_for('settings_page') }}" method="POST">
-                    <input type="hidden" name="action" value="dry_run_yesterday">
-                    <button type="submit" class="btn btn-secondary">対象期間Dry Run</button>
-                </form>
-                <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('対象期間の録音をバックグラウンドで開始します。よろしいですか？');">
-                    <input type="hidden" name="action" value="record_yesterday">
-                    <button type="submit" class="btn btn-primary" style="background-color: #ef4444;">対象期間録音</button>
-                </form>
-                <form action="{{ url_for('settings_page') }}" method="POST">
-                    <input type="hidden" name="action" value="sync_now">
-                    <button type="submit" class="btn btn-primary">今すぐ同期</button>
-                </form>
-                <form action="{{ url_for('settings_page') }}" method="POST">
-                    <input type="hidden" name="action" value="scheduler_dry_run">
-                    <button type="submit" class="btn btn-secondary">Scheduler dry-run</button>
-                </form>
-                <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('Schedulerを今すぐ実行します。scheduler.enabled が true の場合は録音ジョブが開始されます。よろしいですか？');">
-                    <input type="hidden" name="action" value="scheduler_run_now">
-                    <button type="submit" class="btn btn-primary" style="background-color: #0f766e;">Run scheduler now</button>
-                </form>
-            </div>
-            {% if not settings.drive.enabled %}
-            <p class="settings-disabled-msg">Google Drive同期は無効です。</p>
-            {% endif %}
+        <button type="submit" class="btn btn-primary">録音対象期間設定を保存</button>
+    </form>
 
-            <div class="job-status-box">
-                <h3>ジョブステータス</h3>
-                <div class="settings-summary">
-                    <span>Status:
-                        {% if job_status.status == 'running' %}
-                        <span class="badge badge-info">実行中</span>
-                        {% elif job_status.status == 'success' %}
-                        <span class="badge badge-success">成功</span>
-                        {% elif job_status.status == 'failed' %}
-                        <span class="badge badge-danger">失敗</span>
-                        {% elif job_status.status == 'disabled' %}
-                        <span class="badge badge-secondary">Google Drive同期は無効です</span>
-                        {% else %}
-                        <span class="badge badge-secondary">{{ job_status.status }}</span>
-                        {% endif %}
-                    </span>
-                    <span>開始/更新時刻: <strong>{{ job_status.timestamp }}</strong></span>
-                    <span>ジョブ: <strong>{{ job_status.job_name }}</strong></span>
-                    <span>終了コード: <strong>{{ job_status.exit_code if job_status.exit_code is not none else '-' }}</strong></span>
-                </div>
-                <div class="settings-command">実行コマンド: <code>{{ job_status.command }}</code></div>
-                <div class="settings-command">メッセージ: {{ job_status.message }}</div>
-                <pre class="console-box">{{ job_status.log_tail }}</pre>
-            </div>
+    <div class="job-status-box">
+        <h3>Scheduler systemd status</h3>
+        <div class="settings-summary">
+            <span>Service:
+                {% if scheduler_status.service_ok %}
+                <span class="badge badge-success">{{ scheduler_status.service_status }}</span>
+                {% else %}
+                <span class="badge badge-secondary">{{ scheduler_status.service_status }}</span>
+                {% endif %}
+            </span>
+            <span>Timer:
+                {% if scheduler_status.timer_ok %}
+                <span class="badge badge-success">{{ scheduler_status.timer_status }}</span>
+                {% else %}
+                <span class="badge badge-secondary">{{ scheduler_status.timer_status }}</span>
+                {% endif %}
+            </span>
+            <span>Next run time: <strong>{{ scheduler_status.next_run_time }}</strong></span>
         </div>
+        <div class="settings-command">Timer detail:</div>
+        <pre class="console-box">{{ scheduler_status.timer_list }}</pre>
+        <div class="settings-command">Last run log:</div>
+        <pre class="console-box">{{ scheduler_status.last_run_log }}</pre>
     </div>
-</body>
-</html>
+</div>
+
+<div class="card">
+    <h2 class="card-title">ログ設定 / 運用テスト</h2>
+    <div class="test-actions">
+        <form action="{{ url_for('settings_page') }}" method="POST">
+            <input type="hidden" name="action" value="dry_run_yesterday">
+            <button type="submit" class="btn btn-secondary">対象期間Dry Run</button>
+        </form>
+        <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('対象期間の録音をバックグラウンドで開始します。よろしいですか？');">
+            <input type="hidden" name="action" value="record_yesterday">
+            <button type="submit" class="btn btn-danger">対象期間録音</button>
+        </form>
+        <form action="{{ url_for('settings_page') }}" method="POST">
+            <input type="hidden" name="action" value="scheduler_dry_run">
+            <button type="submit" class="btn btn-secondary">Scheduler dry-run</button>
+        </form>
+        <form action="{{ url_for('settings_page') }}" method="POST" onsubmit="return confirm('Schedulerを今すぐ実行します。よろしいですか？');">
+            <input type="hidden" name="action" value="scheduler_run_now">
+            <button type="submit" class="btn btn-primary">Run scheduler now</button>
+        </form>
+    </div>
+
+    <div class="job-status-box">
+        <h3>ジョブステータス</h3>
+        <div class="settings-summary">
+            <span>Status:
+                {% if job_status.status == 'running' %}
+                <span class="badge badge-info">実行中</span>
+                {% elif job_status.status == 'success' %}
+                <span class="badge badge-success">成功</span>
+                {% elif job_status.status == 'failed' %}
+                <span class="badge badge-danger">失敗</span>
+                {% elif job_status.status == 'disabled' %}
+                <span class="badge badge-secondary">Google Drive同期は無効です</span>
+                {% else %}
+                <span class="badge badge-secondary">{{ job_status.status }}</span>
+                {% endif %}
+            </span>
+            <span>開始/更新時刻: <strong>{{ job_status.timestamp }}</strong></span>
+            <span>ジョブ: <strong>{{ job_status.job_name }}</strong></span>
+            <span>終了コード: <strong>{{ job_status.exit_code if job_status.exit_code is not none else '-' }}</strong></span>
+        </div>
+        <div class="settings-command">実行コマンド: <code>{{ job_status.command }}</code></div>
+        <div class="settings-command">メッセージ: {{ job_status.message }}</div>
+        <pre class="console-box">{{ job_status.log_tail }}</pre>
+    </div>
+</div>
+{% endblock %}

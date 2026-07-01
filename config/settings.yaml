@@ -3,7 +3,7 @@ drive:
 scheduler:
   enabled: true
   mode: filtered
-  interval: daily
+  interval: hourly
   hour: 3
   minute: 0
   lookback_days: 7

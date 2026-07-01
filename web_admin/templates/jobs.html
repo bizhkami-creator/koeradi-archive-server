@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}KoeRadi Archive Server - 録音管理{% endblock %}
+{% block page_title %}録音管理{% endblock %}
+{% block page_description %}録音ジョブ一覧、録音ジョブ追加、手動録音、録音履歴を管理します{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('job_form_page') }}" class="btn btn-primary">録音ジョブ追加</a>
+<a href="{{ url_for('manual_recording_page') }}" class="btn btn-outline">手動録音</a>
+<a href="{{ url_for('recordings_page') }}" class="btn btn-outline">録音履歴</a>
+{% endblock %}
+
+{% block content %}
+<div class="card menu-card">
+    <div class="admin-section-links">
+        <a href="{{ url_for('jobs_page') }}" class="is-current">録音ジョブ一覧</a>
+        <a href="{{ url_for('job_form_page') }}">録音ジョブ追加</a>
+        <a href="{{ url_for('manual_recording_page') }}">手動録音</a>
+        <a href="{{ url_for('recordings_page') }}">録音履歴</a>
+        <a href="{{ url_for('program_guide_page') }}">番組表から録音</a>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="card-title">録音ジョブ一覧</h2>
+    {% if rules %}
+    <div class="table-scroll">
+    <table class="rules-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>ジョブ名</th>
+                <th>検索キーワード</th>
+                <th>状態</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in rules %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ rule.name }}</strong></td>
+                <td><code>{{ rule.keyword }}</code></td>
+                <td>
+                    {% if rule.enabled %}
+                    <span class="badge badge-success">有効</span>
+                    {% else %}
+                    <span class="badge badge-secondary">無効</span>
+                    {% endif %}
+                </td>
+                <td class="action-btns">
+                    <form action="{{ url_for('toggle_rule', index=loop.index0) }}" method="POST" style="display:inline;">
+                        {% if rule.enabled %}
+                        <button type="submit" class="btn btn-toggle-off">無効にする</button>
+                        {% else %}
+                        <button type="submit" class="btn btn-toggle-on">有効にする</button>
+                        {% endif %}
+                    </form>
+                    <form action="{{ url_for('delete_rule', index=loop.index0) }}" method="POST" style="display:inline;" onsubmit="return confirm('本当に削除しますか？');">
+                        <button type="submit" class="btn btn-danger">削除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty-msg">登録されている録音ジョブがありません。</p>
+    {% endif %}
+</div>
+
+<div class="card" id="dry-run-section">
+    <h2 class="card-title">
+        録音ジョブ dry-run
+        <span id="loading-spinner" class="loading-spinner">実行中...</span>
+    </h2>
+    <p class="settings-help">現在の録音ジョブに基づいて、昨日の番組表から録音対象となる番組の抽出シミュレーションを行います。</p>
+    <button id="run-btn" class="btn btn-primary" onclick="executeDryRun()">dry-run 実行</button>
+    <div id="console-wrapper" style="display: none;">
+        <h4 style="margin-bottom: 4px; margin-top: 16px;">実行結果:</h4>
+        <pre id="console-output" class="console-box"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function executeDryRun() {
+        const btn = document.getElementById('run-btn');
+        const spinner = document.getElementById('loading-spinner');
+        const consoleWrapper = document.getElementById('console-wrapper');
+        const consoleOutput = document.getElementById('console-output');
+
+        btn.disabled = true;
+        spinner.style.display = 'inline';
+        consoleWrapper.style.display = 'block';
+        consoleOutput.textContent = '処理を実行中... しばらくお待ちください。';
+
+        fetch("{{ url_for('run_dry_run') }}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+            consoleOutput.textContent = data.success ? data.output : 'エラー: ' + data.output;
+        })
+        .catch(error => {
+            btn.disabled = false;
+            spinner.style.display = 'none';
+            consoleOutput.textContent = '通信エラーが発生しました: ' + error;
+        });
+    }
+</script>
+{% endblock %}

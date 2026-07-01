@@ -1,68 +1,56 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>こえラジオ アーカイブ - 対象放送局一覧</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <!-- ヘッダーエリア -->
-        <header>
-            <div class="nav-bar">
-                <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">← Dashboard</a>
-                <a href="{{ url_for('recordings_page') }}" class="btn btn-outline" style="border-color: #8b5cf6; color: #a78bfa;">🎵 Recordings</a>
-                <a href="{{ url_for('rules_page') }}" class="btn btn-outline">📋 Rules</a>
-            </div>
-            <h1>対象放送局一覧 (Stations)</h1>
-            <p>現在のエリア・IP環境で取得可能な radiko 放送局の設定一覧です</p>
-        </header>
+{% extends "base.html" %}
 
-        <!-- 放送局一覧テーブル -->
-        <div class="card">
-            <h2 class="card-title">登録済み放送局 (config/stations.yaml)</h2>
-            {% if stations %}
-            <table class="rules-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>放送局ID (station_id)</th>
-                        <th>放送局名 (station_name)</th>
-                        <th>状態 (enabled)</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for station in stations %}
-                    <tr>
-                        <td>{{ loop.index }}</td>
-                        <td><span class="station-tag">{{ station.station_id }}</span></td>
-                        <td><strong>{{ station.station_name }}</strong></td>
-                        <td>
-                            {% if station.enabled %}
-                            <span class="badge badge-success">有効 (true)</span>
-                            {% else %}
-                            <span class="badge badge-secondary">無効 (false)</span>
-                            {% endif %}
-                        </td>
-                        <td class="action-btns">
-                            <form action="{{ url_for('toggle_station', index=loop.index0) }}" method="POST" style="display:inline;">
-                                {% if station.enabled %}
-                                <button type="submit" class="btn btn-toggle-off">無効にする</button>
-                                {% else %}
-                                <button type="submit" class="btn btn-toggle-on">有効にする</button>
-                                {% endif %}
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <p style="color: var(--text-muted); text-align: center;">登録されている放送局がありません。</p>
-            {% endif %}
-        </div>
+{% block title %}KoeRadi Archive Server - Radiko放送局設定{% endblock %}
+{% block page_title %}Radiko放送局設定{% endblock %}
+{% block page_description %}現在のエリア・IP環境で取得可能な radiko 放送局の設定一覧です{% endblock %}
+{% block page_actions %}
+<a href="{{ url_for('settings_page') }}" class="btn btn-outline">設定へ戻る</a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">登録済み放送局 (config/stations.yaml)</h2>
+    {% if stations %}
+    <div class="table-scroll">
+    <table class="rules-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>放送局ID</th>
+                <th>放送局名</th>
+                <th>状態</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for station in stations %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><span class="station-tag">{{ station.station_id }}</span></td>
+                <td><strong>{{ station.station_name }}</strong></td>
+                <td>
+                    {% if station.enabled %}
+                    <span class="badge badge-success">有効</span>
+                    {% else %}
+                    <span class="badge badge-secondary">無効</span>
+                    {% endif %}
+                </td>
+                <td class="action-btns">
+                    <form action="{{ url_for('toggle_station', index=loop.index0) }}" method="POST" style="display:inline;">
+                        {% if station.enabled %}
+                        <button type="submit" class="btn btn-toggle-off">無効にする</button>
+                        {% else %}
+                        <button type="submit" class="btn btn-toggle-on">有効にする</button>
+                        {% endif %}
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
     </div>
-</body>
-</html>
+    {% else %}
+    <p class="empty-msg">登録されている放送局がありません。</p>
+    {% endif %}
+</div>
+{% endblock %}

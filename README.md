@@ -134,7 +134,7 @@ scheduler:
   lookback_days: 7
 ```
 
-`scheduler.enabled: true` の場合のみ定期録音ジョブを実行します。`mode: filtered` は `bash scripts/run_date_all.sh <YYYY-MM-DD> --filtered`、`mode: full` は `bash scripts/run_date_all.sh <YYYY-MM-DD>` を実行します。`lookback_days` は `1` / `3` / `7` をサポートし、`1` は昨日のみ、`3` は過去3日、`7` は過去7日を対象にします。不正値は `7` に補正されます。`interval` は `hourly` / `every_6_hours` / `daily` / `weekly` をサポートします。
+`scheduler.enabled: true` の場合のみ定期録音ジョブを実行します。`mode: filtered` は `bash scripts/run_date_all.sh <YYYY-MM-DD> --filtered`、`mode: full` は `bash scripts/run_date_all.sh <YYYY-MM-DD>` を実行します。`lookback_days` は `1` / `3` / `7` をサポートし、当日を含めたうえで、`1` は今日＋昨日、`3` は今日＋過去3日、`7` は今日＋過去7日を対象にします。不正値は `7` に補正されます。`interval` は `hourly` / `every_6_hours` / `daily` / `weekly` をサポートします。
 
 ## 昨日の全対象局一括録音運用スクリプトの使い方 (`run_yesterday_all.sh`)
 `config/stations.yaml` に設定された全局の昨日の番組を自動録音し、メタデータ更新およびGoogle Drive同期まで一括実行します。
@@ -199,7 +199,7 @@ bash scripts/run_daily.sh --date 2026-06-27
 ```
 
 ## Scheduler / systemd timer の使い方 (Day19)
-`scripts/scheduled_recording.py` は systemd timer から呼ばれる定期録音エントリーポイントです。`config/settings.yaml` を読み、`scheduler.enabled` が `false` の場合は録音せず正常終了します。外付けHDD `/mnt/koeradi` がマウントされていない場合は録音を中止します。`scheduler.lookback_days` に応じて、昨日から過去1/3/7日分を順番に処理します。
+`scripts/scheduled_recording.py` は systemd timer から呼ばれる定期録音エントリーポイントです。`config/settings.yaml` を読み、`scheduler.enabled` が `false` の場合は録音せず正常終了します。外付けHDD `/mnt/koeradi` がマウントされていない場合は録音を中止します。`scheduler.lookback_days` に応じて、当日と過去1/3/7日分を順番に処理します。
 
 ### 手動実行
 ```bash
@@ -267,7 +267,7 @@ http://<RaspberryPiのIPアドレス>:8080
 - **Settings画面 (`/settings`)** (Day18/Day19追加):
   - **Google Drive同期ON/OFF**: `drive.enabled` を切り替えます。OFFの場合、自動同期およびWeb画面からの今すぐ同期は実行されず、「Google Drive同期は無効です。」と表示されます。
   - **Scheduler設定**: `enabled`, `mode`, `interval`, `hour`, `minute`, `lookback_days` を保存できます。Day19では systemd timer から `scheduled_recording.py` を起動し、設定値に基づいて録音ジョブを実行またはスキップします。
-  - **録音対象期間**: `lookback_days` により、昨日のみ / 過去3日 / 過去7日を選択できます。Settingsの対象期間Dry Run / 対象期間録音もこの設定に従います。
+  - **録音対象期間**: `lookback_days` により、今日＋昨日 / 今日＋過去3日 / 今日＋過去7日を選択できます。Settingsの対象期間Dry Run / 対象期間録音もこの設定に従います。
   - **Scheduler状態表示**: Scheduler service status、Timer status、Next run time、`logs/scheduler.log` の末尾を確認できます。
   - **Testボタン**: 昨日分Dry Run、昨日分録音、今すぐ同期、Scheduler dry-run、Run scheduler now をブラウザからバックグラウンド起動できます。
   - **ステータス表示**: 実行中、成功、失敗、Google Drive同期無効、実行開始時刻、実行コマンド、終了コード、最新ログの一部を表示します。

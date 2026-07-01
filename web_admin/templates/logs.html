@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}KoeRadi Archive Server - ログ{% endblock %}
+{% block page_title %}ログ{% endblock %}
+{% block page_description %}アプリログ、録音ジョブログ、エラーログを確認します{% endblock %}
+{% block page_actions %}
+<button class="btn btn-outline" onclick="location.reload()">更新</button>
+{% endblock %}
+
+{% block content %}
+<div class="card menu-card">
+    <div class="admin-section-links">
+        {% for log in log_files %}
+        <a href="{{ url_for('logs_page', log=log.key) }}" class="{% if selected_log.key == log.key %}is-current{% endif %}">
+            {{ log.label }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="card-title">{{ selected_log.label }} <span class="muted">logs/{{ selected_log.filename }}</span></h2>
+    <pre class="console-box">{{ logs_text }}</pre>
+</div>
+{% endblock %}

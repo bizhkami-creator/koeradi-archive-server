@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}KoeRadi Archive Server{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+</head>
+<body>
+    <header class="mobile-header">
+        <div>
+            <div class="mobile-brand">KoeRadi Archive</div>
+            <div class="mobile-current">{{ self.page_title() }}</div>
+        </div>
+        <button type="button" class="mobile-menu-button" aria-controls="mobileNav" aria-expanded="false" onclick="toggleMobileMenu(this)">
+            メニュー
+        </button>
+    </header>
+    <nav id="mobileNav" class="mobile-nav" aria-label="スマホ管理メニュー">
+        {% for item in admin_nav %}
+        <a href="{{ url_for(item.endpoint) }}" class="mobile-nav-link {% if active_nav == item.key %}active{% endif %}">
+            {{ item.label }}
+        </a>
+        {% endfor %}
+    </nav>
+
+    <div class="admin-shell">
+        <aside class="admin-sidebar">
+            <div class="admin-brand">
+                <div class="admin-brand-title">KoeRadi Archive</div>
+                <div class="admin-brand-subtitle">Admin</div>
+            </div>
+            <nav class="admin-nav" aria-label="管理メニュー">
+                {% for item in admin_nav %}
+                <a href="{{ url_for(item.endpoint) }}" class="admin-nav-link {% if active_nav == item.key %}active{% endif %}">
+                    {{ item.label }}
+                </a>
+                {% endfor %}
+            </nav>
+            <div class="admin-nav-note">
+                <span>/admin は管理者向け</span>
+                <span>/remote は将来の再生専用画面</span>
+            </div>
+        </aside>
+
+        <main class="admin-main">
+            <header class="page-header">
+                <div>
+                    <h1>{{ self.page_title() }}</h1>
+                    <p>{% block page_description %}{% endblock %}</p>
+                </div>
+                <div class="page-actions">
+                    {% block page_actions %}{% endblock %}
+                </div>
+            </header>
+
+            {% if message %}
+            <div class="alert alert-{{ message_type|default('info') }}">
+                {{ message }}
+            </div>
+            {% endif %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    {% block scripts %}{% endblock %}
+    <script>
+        function toggleMobileMenu(button) {
+            const nav = document.getElementById('mobileNav');
+            const isOpen = nav.classList.toggle('open');
+            if (button) {
+                button.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            }
+        }
+    </script>
+</body>
+</html>
