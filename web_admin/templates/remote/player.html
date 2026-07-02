@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KoeRadi Remote Player</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/remote.css') }}">
+</head>
+<body class="remote-page">
+    <main class="remote-player">
+        <p class="remote-label">KoeRadi Remote Player</p>
+
+        {% if item %}
+        <section class="remote-now-playing" aria-label="現在再生中">
+            <h1>{{ item.title or item.filename }}</h1>
+            <dl>
+                <div>
+                    <dt>放送日</dt>
+                    <dd>{{ item.date or '-' }}</dd>
+                </div>
+                <div>
+                    <dt>局名</dt>
+                    <dd>{{ item.station or item.station_id or '-' }}</dd>
+                </div>
+                <div>
+                    <dt>現在再生中</dt>
+                    <dd id="remotePlaybackStatus">読み込み中</dd>
+                </div>
+                <div>
+                    <dt>現在位置</dt>
+                    <dd id="remoteCurrentTime">0</dd>
+                </div>
+                <div>
+                    <dt>長さ</dt>
+                    <dd id="remoteDuration">0</dd>
+                </div>
+                <div>
+                    <dt>再生速度</dt>
+                    <dd id="remotePlaybackRate">1.0</dd>
+                </div>
+                <div>
+                    <dt>最終イベント</dt>
+                    <dd id="remoteLastEvent">init</dd>
+                </div>
+            </dl>
+        </section>
+
+        <audio
+            id="remoteAudio"
+            class="remote-audio"
+            controls
+            autoplay
+            preload="auto"
+            data-file-id="{{ item.file_id }}"
+            data-title="{{ item.title or item.filename }}"
+            data-station="{{ item.station or item.station_id or '' }}"
+            data-date="{{ item.date or '' }}"
+            data-stream-url="{{ item.stream_url }}"
+        >
+            <source src="{{ item.stream_url }}" type="{{ audio_mimetype }}">
+            お使いの環境は音声再生に対応していません。
+        </audio>
+
+        <div class="remote-controls" aria-label="最小再生操作">
+            <button type="button" onclick="playAudio()">Play</button>
+            <button type="button" onclick="pauseAudio()">Pause</button>
+            <button type="button" onclick="seekBackward(15)">-15s</button>
+            <button type="button" onclick="seekForward(15)">+15s</button>
+        </div>
+
+        <pre id="remotePlaybackState" class="remote-state-output" aria-label="再生状態JSON"></pre>
+        {% else %}
+        <section class="remote-now-playing" aria-live="assertive">
+            <h1>Remote Player</h1>
+            <p id="remotePlaybackStatus">{{ error }}</p>
+            <p class="remote-links"><a href="{{ url_for('remote_home') }}">/remote へ戻る</a></p>
+            {% if latest_recording %}
+            <p class="remote-links">
+                最新録音:
+                <a href="{{ url_for('remote_player', file_id=latest_recording.file_id) }}">
+                    {{ latest_recording.title or latest_recording.filename }}
+                </a>
+            </p>
+            {% endif %}
+        </section>
+        {% endif %}
+    </main>
+
+    <script>
+        window.KoeRadiFile = {{ item|tojson if item else 'null' }};
+        window.KoeRadiLastEvent = {
+            type: 'init',
+            state: null
+        };
+    </script>
+    <script src="{{ url_for('static', filename='js/remote_player.js') }}"></script>
+</body>
+</html>

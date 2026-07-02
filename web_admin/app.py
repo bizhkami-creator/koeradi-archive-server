@@ -686,6 +686,46 @@ def dashboard():
         recent_recordings=recent_recordings
     )
 
+@app.route('/remote')
+def remote_home():
+    """音声クライアント向けRemote Playerトップページ"""
+    recordings = get_recording_items()
+    latest_recording = serialize_recording_item(recordings[0]) if recordings else None
+    api_files_preview = [serialize_recording_item(item) for item in recordings[:5]]
+    return render_template(
+        'remote/index.html',
+        service_status='Remote Player Ready',
+        api_status='OK',
+        file_count=len(recordings),
+        latest_recording=latest_recording,
+        api_files_preview=api_files_preview
+    )
+
+@app.route('/remote/player')
+def remote_player():
+    """音声クライアント向けHTML5 audio再生ページ"""
+    file_id = request.args.get('file_id', '').strip()
+    recordings = get_recording_items()
+    latest_recording = serialize_recording_item(recordings[0]) if recordings else None
+    item = find_recording_by_file_id(file_id) if file_id else None
+
+    error = None
+    if not file_id:
+        error = 'file_id が指定されていません'
+    elif not item:
+        error = '指定された音声ファイルが見つかりません。'
+    elif not recordings:
+        error = '再生できる音声ファイルが見つかりません。'
+
+    return render_template(
+        'remote/player.html',
+        file_id=file_id,
+        item=serialize_recording_item(item, detail=True) if item else None,
+        audio_mimetype=get_audio_mimetype(item.get('filename') or item.get('relative_path')) if item else '',
+        latest_recording=latest_recording,
+        error=error
+    )
+
 @app.route('/settings', methods=['GET', 'POST'])
 @app.route('/admin/settings', methods=['GET', 'POST'])
 def settings_page():
@@ -852,6 +892,15 @@ def format_size(size_bytes):
         return f"{size_bytes / (1024 * 1024):.1f} MB"
     else:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+def get_audio_mimetype(path):
+    """音声ファイル拡張子からMIMEタイプを返す"""
+    return {
+        '.m4a': 'audio/mp4',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.aac': 'audio/aac',
+    }.get(os.path.splitext(path or '')[1].lower(), 'application/octet-stream')
 
 def make_file_id(relative_path):
     """公開URLに実パスを出さないため、audio配下の相対パスから安定IDを生成する"""
@@ -1223,16 +1272,9 @@ def api_stream(file_id):
     if error:
         return jsonify({'ok': False, 'error': 'File not found'}), 404
 
-    mimetype = {
-        '.m4a': 'audio/mp4',
-        '.mp3': 'audio/mpeg',
-        '.wav': 'audio/wav',
-        '.aac': 'audio/aac',
-    }.get(os.path.splitext(abs_path)[1].lower(), 'application/octet-stream')
-
     return send_file(
         abs_path,
-        mimetype=mimetype,
+        mimetype=get_audio_mimetype(abs_path),
         as_attachment=False,
         download_name=item.get('filename') or os.path.basename(abs_path),
         conditional=True,

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KoeRadi Remote</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/remote.css') }}">
+</head>
+<body class="remote-page">
+    <main class="remote-status" aria-live="polite">
+        <p class="remote-label">KoeRadi</p>
+        <h1>{{ service_status }}</h1>
+
+        <dl>
+            <div>
+                <dt>API接続状態</dt>
+                <dd>{{ api_status }}</dd>
+            </div>
+            <div>
+                <dt>/api/files</dt>
+                <dd>ok: true / count: {{ file_count }}</dd>
+            </div>
+        </dl>
+
+        <p class="remote-links">
+            {% if latest_recording %}
+            最新録音:
+            <a href="{{ url_for('remote_player', file_id=latest_recording.file_id) }}">
+                {{ latest_recording.title or latest_recording.filename }}
+            </a>
+            {% else %}
+            最新録音: なし
+            {% endif %}
+        </p>
+
+        <section class="remote-api-summary" aria-label="/api/files 簡易情報">
+            <h2>/api/files 簡易情報</h2>
+            {% if api_files_preview %}
+            <ul class="remote-file-list">
+                {% for item in api_files_preview %}
+                <li>
+                    <a href="{{ url_for('remote_player', file_id=item.file_id) }}">{{ item.title or item.filename }}</a>
+                    <span>{{ item.station or '-' }} / {{ item.date or '-' }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="remote-meta">録音ファイルはありません。</p>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>
