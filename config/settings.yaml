@@ -4,6 +4,6 @@ scheduler:
   enabled: true
   mode: filtered
   interval: hourly
-  hour: 3
+  hour: 0
   minute: 0
   lookback_days: 7

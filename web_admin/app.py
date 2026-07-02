@@ -2,12 +2,13 @@ import os
 import re
 import sys
 import json
+import hashlib
 import shutil
 import datetime
 import difflib
 import subprocess
 import yaml
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
@@ -21,6 +22,7 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
 DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
+AUDIO_EXTENSIONS = ('.m4a', '.mp3', '.wav', '.aac')
 
 ADMIN_NAV = [
     {'key': 'dashboard', 'label': 'ダッシュボード', 'endpoint': 'dashboard'},
@@ -851,6 +853,121 @@ def format_size(size_bytes):
     else:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
+def make_file_id(relative_path):
+    """公開URLに実パスを出さないため、audio配下の相対パスから安定IDを生成する"""
+    normalized = (relative_path or '').replace('\\', '/')
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:24]
+
+def normalize_recording_item(item):
+    """管理画面/metadata由来のitemをAPIでも扱いやすい形に整える"""
+    relative_path = (item.get('relative_path') or '').replace('\\', '/')
+    filename = item.get('file_name') or item.get('filename') or os.path.basename(relative_path)
+    title = item.get('program_name') or item.get('title') or ''
+    station = item.get('station_name') or item.get('station') or item.get('station_id') or ''
+    date_str = item.get('date') or ''
+    abs_path = os.path.realpath(os.path.join(DATA_DIR, relative_path)) if relative_path else ''
+    size_bytes = None
+    if abs_path and os.path.exists(abs_path) and os.path.isfile(abs_path):
+        size_bytes = os.path.getsize(abs_path)
+
+    normalized = {
+        **item,
+        'file_id': make_file_id(relative_path),
+        'filename': filename,
+        'file_name': filename,
+        'title': title,
+        'program_name': title,
+        'station': station,
+        'station_name': station,
+        'date': date_str,
+        'path': relative_path,
+        'relative_path': relative_path,
+        'size': size_bytes,
+        'size_bytes': size_bytes,
+        'file_size': item.get('file_size') or format_size(size_bytes),
+    }
+    normalized['stream_url'] = f"/api/stream/{normalized['file_id']}"
+    return normalized
+
+def get_recording_items():
+    """metadata.json と実ファイル走査を統合して録音ファイル一覧を返す"""
+    meta_file = os.path.join(DATA_DIR, 'metadata', 'metadata.json')
+
+    if not os.path.exists(meta_file):
+        try:
+            gen_script = os.path.join(BASE_DIR, 'scripts', 'generate_metadata.py')
+            subprocess.run(['python3', gen_script], check=True)
+        except Exception as e:
+            print(f"metadata.json 生成失敗: {e}")
+
+    items = []
+    seen_paths = set()
+
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                raw_items = json.load(f) or []
+                for item in raw_items:
+                    rel_path = (item.get('relative_path') or '').replace('\\', '/')
+                    rel, abs_path, error = resolve_audio_relative_path(rel_path)
+                    if error:
+                        continue
+                    normalized = normalize_recording_item({
+                        'file_name': item.get('file_name', ''),
+                        'station_id': item.get('station_id', ''),
+                        'station_name': item.get('station_name', item.get('station_id', 'unknown')),
+                        'program_name': item.get('program_name', ''),
+                        'personality': item.get('personality', ''),
+                        'date': item.get('date', 'unknown'),
+                        'year': item.get('year', ''),
+                        'month': item.get('month', ''),
+                        'relative_path': rel,
+                        'file_size': format_size(os.path.getsize(abs_path)),
+                    })
+                    items.append(normalized)
+                    seen_paths.add(rel)
+        except Exception as e:
+            print(f"metadata.json 読み込み失敗: {e}")
+
+    for item in scan_audio_recording_items():
+        if item['relative_path'] in seen_paths:
+            continue
+        normalized = normalize_recording_item(item)
+        items.append(normalized)
+        seen_paths.add(item['relative_path'])
+
+    items.sort(key=lambda x: (x.get('date', ''), x.get('filename', '')), reverse=True)
+    return items
+
+def find_recording_by_file_id(file_id):
+    """file_id から現在存在する録音ファイルを解決する"""
+    if not re.match(r'^[0-9a-f]{24}$', file_id or ''):
+        return None
+    return next((item for item in get_recording_items() if item['file_id'] == file_id), None)
+
+def serialize_recording_item(item, detail=False):
+    """APIレスポンス用の録音ファイルJSONを作る"""
+    payload = {
+        'file_id': item['file_id'],
+        'filename': item['filename'],
+        'title': item['title'],
+        'station': item['station'],
+        'station_id': item.get('station_id', ''),
+        'date': item.get('date', ''),
+        'path': item.get('path', ''),
+        'size': item.get('size'),
+        'size_label': item.get('file_size', ''),
+        'stream_url': item['stream_url'],
+    }
+    if detail:
+        payload.update({
+            'personality': item.get('personality', ''),
+            'year': item.get('year', ''),
+            'month': item.get('month', ''),
+            'relative_path': item.get('relative_path', ''),
+        })
+    return payload
+
 def parse_audio_item_from_path(abs_path, station_map):
     """metadata.json が古い場合でも実ファイルから一覧用メタデータを作る"""
     audio_dir = os.path.join(DATA_DIR, 'audio')
@@ -928,7 +1045,7 @@ def scan_audio_recording_items():
     items = []
     for root, dirs, files in os.walk(audio_dir):
         for file in files:
-            if not file.lower().endswith(('.m4a', '.mp3', '.wav', '.aac')):
+            if not file.lower().endswith(AUDIO_EXTENSIONS):
                 continue
             abs_path = os.path.join(root, file)
             try:
@@ -947,74 +1064,10 @@ def recordings_page():
     deleted_count = request.args.get('deleted', '').strip()
     delete_errors = request.args.get('delete_errors', '').strip()
     trash_dir = request.args.get('trash_dir', '').strip()
-    
-    meta_file = os.path.join(DATA_DIR, 'metadata', 'metadata.json')
-    
-    # metadata.json が存在しない場合は自動生成を試みる
-    if not os.path.exists(meta_file):
-        try:
-            gen_script = os.path.join(BASE_DIR, 'scripts', 'generate_metadata.py')
-            subprocess.run(['python3', gen_script], check=True)
-        except Exception as e:
-            print(f"metadata.json 生成失敗: {e}")
-            
-    items = []
-    stations_set = set()
-    dates_set = set()
-    
-    seen_paths = set()
 
-    if os.path.exists(meta_file):
-        try:
-            with open(meta_file, 'r', encoding='utf-8') as f:
-                raw_items = json.load(f) or []
-                for item in raw_items:
-                    st_name = item.get('station_name', item.get('station_id', 'unknown'))
-                    st_id = item.get('station_id', '')
-                    date_str = item.get('date', 'unknown')
-                    prog_name = item.get('program_name', '')
-                    personality = item.get('personality', '')
-                    file_name = item.get('file_name', '')
-                    rel_path = item.get('relative_path', '')
-                    
-                    if st_name and st_name != 'unknown':
-                        stations_set.add(st_name)
-                    if date_str and date_str != 'unknown':
-                        dates_set.add(date_str)
-                    
-                    # 実ファイルの存在確認とファイルサイズ取得
-                    abs_path = os.path.join(DATA_DIR, rel_path)
-                    file_size_str = "不明"
-                    if os.path.exists(abs_path):
-                        file_size_str = format_size(os.path.getsize(abs_path))
-                    else:
-                        continue
-                        
-                    items.append({
-                        'file_name': file_name,
-                        'station_id': st_id,
-                        'station_name': st_name,
-                        'program_name': prog_name,
-                        'personality': personality,
-                        'date': date_str,
-                        'year': item.get('year', ''),
-                        'month': item.get('month', ''),
-                        'relative_path': rel_path,
-                        'file_size': file_size_str
-                    })
-                    seen_paths.add(rel_path)
-        except Exception as e:
-            print(f"metadata.json 読み込み失敗: {e}")
-
-    for item in scan_audio_recording_items():
-        if item['relative_path'] in seen_paths:
-            continue
-        items.append(item)
-        seen_paths.add(item['relative_path'])
-        if item['station_name'] and item['station_name'] != 'unknown':
-            stations_set.add(item['station_name'])
-        if item['date'] and item['date'] != 'unknown':
-            dates_set.add(item['date'])
+    items = get_recording_items()
+    stations_set = {item['station_name'] for item in items if item['station_name'] and item['station_name'] != 'unknown'}
+    dates_set = {item['date'] for item in items if item['date'] and item['date'] != 'unknown'}
 
     # フィルタリング
     filtered_items = []
@@ -1097,6 +1150,93 @@ def serve_audio(filepath):
         abort(404)
         
     return send_from_directory(audio_dir, filepath)
+
+@app.route('/api/health')
+def api_health():
+    """クライアント向け稼働確認API"""
+    return jsonify({
+        'ok': True,
+        'data': {
+            'status': 'ok',
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'service': 'koeradi-archive-server',
+        }
+    })
+
+@app.route('/api/files')
+def api_files():
+    """録音ファイル一覧API"""
+    files = [serialize_recording_item(item) for item in get_recording_items()]
+    return jsonify({
+        'ok': True,
+        'data': {
+            'count': len(files),
+            'files': files,
+        }
+    })
+
+@app.route('/api/search')
+def api_search():
+    """録音ファイル検索API"""
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'ok': True, 'results': [], 'data': {'count': 0, 'results': []}})
+
+    q_lower = query.lower()
+    results = []
+    for item in get_recording_items():
+        haystack = ' '.join([
+            item.get('title', ''),
+            item.get('station', ''),
+            item.get('station_id', ''),
+            item.get('date', ''),
+            item.get('filename', ''),
+        ]).lower()
+        if q_lower in haystack:
+            results.append(serialize_recording_item(item))
+
+    return jsonify({
+        'ok': True,
+        'results': results,
+        'data': {
+            'count': len(results),
+            'results': results,
+        }
+    })
+
+@app.route('/api/files/<file_id>')
+def api_file_detail(file_id):
+    """指定録音ファイルの詳細API"""
+    item = find_recording_by_file_id(file_id)
+    if not item:
+        return jsonify({'ok': False, 'error': 'File not found'}), 404
+    return jsonify({'ok': True, 'data': serialize_recording_item(item, detail=True)})
+
+@app.route('/api/stream/<file_id>')
+def api_stream(file_id):
+    """file_id指定の音声ストリーミングAPI"""
+    item = find_recording_by_file_id(file_id)
+    if not item:
+        return jsonify({'ok': False, 'error': 'File not found'}), 404
+
+    rel, abs_path, error = resolve_audio_relative_path(item.get('relative_path'))
+    if error:
+        return jsonify({'ok': False, 'error': 'File not found'}), 404
+
+    mimetype = {
+        '.m4a': 'audio/mp4',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.aac': 'audio/aac',
+    }.get(os.path.splitext(abs_path)[1].lower(), 'application/octet-stream')
+
+    return send_file(
+        abs_path,
+        mimetype=mimetype,
+        as_attachment=False,
+        download_name=item.get('filename') or os.path.basename(abs_path),
+        conditional=True,
+    )
 
 def get_manual_recording_logs(max_lines=100):
     """manual_recording.log から最新行を取得"""

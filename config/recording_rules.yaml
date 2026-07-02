@@ -26,3 +26,9 @@ rules:
 - name: 辛坊
   keyword: 辛坊
   enabled: true
+- name: 大竹まこと
+  keyword: 大竹まこと
+  enabled: true
+- name: ひろゆき
+  keyword: ひろゆき
+  enabled: true
