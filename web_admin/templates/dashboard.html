@@ -4,6 +4,7 @@
 {% block page_title %}ダッシュボード{% endblock %}
 {% block page_description %}サーバー状態、最新録音状況、次回録音予定、直近ログ概要を確認します{% endblock %}
 {% block page_actions %}
+<a href="{{ url_for('live_page') }}" class="btn btn-primary">ライブ再生</a>
 <a href="{{ url_for('manual_recording_page') }}" class="btn btn-primary">手動録音</a>
 <button class="btn btn-secondary" onclick="executeDryRun()">Dry Run 実行</button>
 <button class="btn btn-outline" onclick="location.reload()">更新</button>
@@ -12,6 +13,7 @@
 {% block content %}
 <div class="card menu-card">
     <div class="admin-section-links">
+        <a href="{{ url_for('live_page') }}">ライブ再生</a>
         <a href="{{ url_for('jobs_page') }}">録音ジョブ一覧</a>
         <a href="{{ url_for('job_form_page') }}">録音ジョブ追加</a>
         <a href="{{ url_for('manual_recording_page') }}">手動録音</a>

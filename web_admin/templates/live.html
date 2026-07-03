@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}KoeRadi Archive Server - ライブ再生{% endblock %}
+{% block page_title %}ライブ再生{% endblock %}
+{% block page_description %}管理画面から現在放送中の radiko ライブ音声を再生します{% endblock %}
+{% block page_actions %}
+<button type="button" class="btn btn-outline" onclick="loadStations()">局一覧を更新</button>
+{% endblock %}
+
+{% block content %}
+<div class="live-layout">
+    <section class="card live-stations-card">
+        <h2 class="card-title">局一覧</h2>
+        {% if stations %}
+        <div id="liveStations" class="live-station-list">
+            {% for station in stations %}
+            <button
+                type="button"
+                class="live-station-button {% if station.station_id == selected_station %}active{% endif %}"
+                data-station-id="{{ station.station_id }}"
+                data-station-name="{{ station.station_name or station.station_id }}"
+                onclick="selectStation(this.dataset.stationId, this.dataset.stationName)"
+            >
+                <span class="station-tag">{{ station.station_id }}</span>
+                <strong>{{ station.station_name or station.station_id }}</strong>
+            </button>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-msg">有効な放送局がありません。設定画面で放送局を有効にしてください。</p>
+        {% endif %}
+    </section>
+
+    <section class="card live-player-card">
+        <h2 class="card-title">再生プレーヤー</h2>
+        <div class="live-selected">
+            <span>選択中の局</span>
+            <strong id="selectedStationName">-</strong>
+            <code id="selectedStationId">-</code>
+        </div>
+        <audio id="liveAudio" class="live-audio" controls preload="none"></audio>
+        <div class="live-actions">
+            <button type="button" class="btn btn-primary" onclick="playSelectedStation()">この局を再生</button>
+            <button type="button" class="btn btn-secondary" onclick="stopLiveAudio()">停止</button>
+        </div>
+        <div id="liveError" class="alert alert-danger live-error" style="display: none;"></div>
+        <p class="live-note">
+            配信はサーバー側で radiko HLS を ffmpeg に渡し、ブラウザ向け MP3 としてプロキシします。
+            再生できない場合は logs/live_stream.log を確認してください。
+        </p>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let selectedStationId = {{ selected_station|tojson }};
+    let selectedStationName = '';
+
+    function setError(message) {
+        const errorBox = document.getElementById('liveError');
+        if (!message) {
+            errorBox.style.display = 'none';
+            errorBox.textContent = '';
+            return;
+        }
+        errorBox.style.display = 'block';
+        errorBox.textContent = message;
+    }
+
+    function updateSelectedStation(stationId, stationName) {
+        selectedStationId = stationId || '';
+        selectedStationName = stationName || stationId || '-';
+        document.getElementById('selectedStationId').textContent = selectedStationId || '-';
+        document.getElementById('selectedStationName').textContent = selectedStationName || '-';
+
+        document.querySelectorAll('.live-station-button').forEach((button) => {
+            button.classList.toggle('active', button.dataset.stationId === selectedStationId);
+        });
+    }
+
+    function selectStation(stationId, stationName) {
+        stopLiveAudio();
+        setError('');
+        updateSelectedStation(stationId, stationName);
+    }
+
+    function playSelectedStation() {
+        if (!selectedStationId) {
+            setError('再生する局を選択してください。');
+            return;
+        }
+        const audio = document.getElementById('liveAudio');
+        audio.src = `/api/live/stream/${encodeURIComponent(selectedStationId)}`;
+        audio.load();
+        const playPromise = audio.play();
+        if (playPromise) {
+            playPromise.catch((error) => {
+                setError(`ブラウザで再生を開始できませんでした: ${error.message}`);
+            });
+        }
+    }
+
+    function stopLiveAudio() {
+        const audio = document.getElementById('liveAudio');
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+    }
+
+    function renderStations(stations) {
+        const list = document.getElementById('liveStations');
+        if (!list) {
+            return;
+        }
+        list.innerHTML = '';
+        stations.forEach((station) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'live-station-button';
+            button.dataset.stationId = station.station_id;
+            button.dataset.stationName = station.station_name || station.station_id;
+            button.innerHTML = `<span class="station-tag"></span><strong></strong>`;
+            button.querySelector('.station-tag').textContent = station.station_id;
+            button.querySelector('strong').textContent = station.station_name || station.station_id;
+            button.addEventListener('click', () => selectStation(button.dataset.stationId, button.dataset.stationName));
+            list.appendChild(button);
+        });
+        if (!selectedStationId && stations.length > 0) {
+            updateSelectedStation(stations[0].station_id, stations[0].station_name || stations[0].station_id);
+        } else {
+            const selected = stations.find((station) => station.station_id === selectedStationId);
+            if (selected) {
+                updateSelectedStation(selected.station_id, selected.station_name || selected.station_id);
+            }
+        }
+    }
+
+    function loadStations() {
+        fetch('{{ url_for("api_live_stations") }}')
+            .then((response) => response.json())
+            .then((payload) => {
+                if (!payload.ok) {
+                    throw new Error(payload.error || '局一覧を取得できませんでした。');
+                }
+                renderStations(payload.data.stations || []);
+                setError('');
+            })
+            .catch((error) => {
+                setError(`局一覧の取得に失敗しました: ${error.message}`);
+            });
+    }
+
+    document.getElementById('liveAudio').addEventListener('error', () => {
+        setError('ライブ音声を読み込めませんでした。radiko認証、エリア判定、ffmpeg、ネットワーク状態を確認してください。');
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const first = document.querySelector(`.live-station-button[data-station-id="${selectedStationId}"]`) || document.querySelector('.live-station-button');
+        if (first) {
+            updateSelectedStation(first.dataset.stationId, first.dataset.stationName);
+        }
+    });
+</script>
+{% endblock %}

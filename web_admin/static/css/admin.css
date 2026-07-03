@@ -101,6 +101,10 @@ select,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .live-layout {
+    grid-template-columns: 1fr;
+  }
+
   .recordings-grid {
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   }
@@ -305,6 +309,7 @@ select,
   .settings-grid,
   .add-form,
   .grid-4,
+  .live-layout,
   .stations-checkbox-grid {
     grid-template-columns: 1fr;
   }

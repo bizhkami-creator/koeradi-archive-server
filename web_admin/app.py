@@ -7,8 +7,13 @@ import shutil
 import datetime
 import difflib
 import subprocess
+import base64
+import secrets
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
 import yaml
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort, Response, stream_with_context
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
@@ -22,10 +27,13 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
 DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
+LIVE_STREAM_LOG = os.path.join(LOGS_DIR, 'live_stream.log')
 AUDIO_EXTENSIONS = ('.m4a', '.mp3', '.wav', '.aac')
+RADIKO_AUTHKEY_VALUE = 'bcd151073c03b352e1ef2fd66c32209da9ca0afa'
 
 ADMIN_NAV = [
     {'key': 'dashboard', 'label': 'ダッシュボード', 'endpoint': 'dashboard'},
+    {'key': 'live', 'label': 'ライブ再生', 'endpoint': 'live_page'},
     {'key': 'jobs', 'label': '録音管理', 'endpoint': 'jobs_page'},
     {'key': 'files', 'label': 'ファイル管理', 'endpoint': 'files_page'},
     {'key': 'settings', 'label': '設定', 'endpoint': 'settings_page'},
@@ -182,6 +190,116 @@ def load_stations():
                     'enabled': True
                 })
         return result
+
+def get_enabled_stations():
+    """ライブ再生・録音対象として有効な放送局一覧を返す"""
+    return [s for s in load_stations() if s.get('enabled', True) and s.get('station_id')]
+
+def find_station(station_id):
+    """station_id から設定済み放送局を検索する"""
+    target = (station_id or '').strip().upper()
+    return next((s for s in load_stations() if s.get('station_id', '').upper() == target), None)
+
+def log_live_stream(event):
+    """ライブ再生関連の状態をJSON Linesで記録する"""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    payload = {
+        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        **event,
+    }
+    with open(LIVE_STREAM_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + '\n')
+
+def radiko_request(url, headers=None, timeout=10):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return res.read(), res.headers
+
+def get_radiko_auth():
+    """radikoのエリア認証を行い、ffmpeg用ヘッダ情報を返す"""
+    auth1_headers = {
+        'X-Radiko-App': 'pc_html5',
+        'X-Radiko-App-Version': '0.0.1',
+        'X-Radiko-Device': 'pc',
+        'X-Radiko-User': 'dummy_user',
+    }
+    _, headers = radiko_request('https://radiko.jp/v2/api/auth1', headers=auth1_headers)
+    authtoken = headers.get('X-Radiko-AuthToken')
+    keyoffset = headers.get('X-Radiko-KeyOffset')
+    keylength = headers.get('X-Radiko-KeyLength')
+    if not authtoken or keyoffset is None or keylength is None:
+        raise RuntimeError('radiko auth1 response did not include required headers')
+
+    offset = int(keyoffset)
+    length = int(keylength)
+    partial_key = base64.b64encode(RADIKO_AUTHKEY_VALUE[offset:offset + length].encode('ascii')).decode('ascii')
+    auth2_headers = {
+        'X-Radiko-Device': 'pc',
+        'X-Radiko-User': 'dummy_user',
+        'X-Radiko-AuthToken': authtoken,
+        'X-Radiko-PartialKey': partial_key,
+    }
+    body, _ = radiko_request('https://radiko.jp/v2/api/auth2', headers=auth2_headers)
+    auth2_text = body.decode('utf-8', errors='ignore').strip()
+    if not auth2_text or auth2_text == 'OUT':
+        raise RuntimeError('radiko auth2 failed: area could not be detected or access is outside Japan')
+
+    area_id = auth2_text.splitlines()[0].split(',')[0].strip()
+    if not area_id:
+        raise RuntimeError('radiko auth2 response did not include area_id')
+    return {'authtoken': authtoken, 'area_id': area_id}
+
+def get_radiko_live_playlist_urls(station_id):
+    """radikoのライブHLS playlist URL候補を取得する"""
+    xml_url = f'https://radiko.jp/v3/station/stream/pc_html5/{station_id}.xml'
+    body, _ = radiko_request(xml_url)
+    root = ET.fromstring(body)
+    urls = []
+    fallback_urls = []
+
+    for url_node in root.findall('.//url'):
+        playlist_node = url_node.find('playlist_create_url')
+        playlist_url = (playlist_node.text or '').strip() if playlist_node is not None else ''
+        if not playlist_url:
+            continue
+        if url_node.get('timefree') == '0' and url_node.get('areafree') == '0':
+            urls.append(playlist_url)
+        else:
+            fallback_urls.append(playlist_url)
+
+    return urls or fallback_urls
+
+def build_radiko_live_hls_url(station_id, playlist_url):
+    """radikoライブHLSで必要なクエリを付与する"""
+    lsid = secrets.token_hex(16)
+    query = urllib.parse.urlencode({
+        'station_id': station_id,
+        'l': '15',
+        'lsid': lsid,
+        'type': 'b',
+    })
+    separator = '&' if '?' in playlist_url else '?'
+    return f'{playlist_url}{separator}{query}'
+
+def build_live_ffmpeg_command(station_id, hls_url, auth):
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        raise RuntimeError('ffmpeg command was not found')
+    ffmpeg_header = f"X-Radiko-Authtoken: {auth['authtoken']}\r\nX-Radiko-AreaId: {auth['area_id']}\r\n"
+    return [
+        ffmpeg_path,
+        '-nostdin',
+        '-loglevel', 'warning',
+        '-headers', ffmpeg_header,
+        '-http_seekable', '0',
+        '-seekable', '0',
+        '-i', build_radiko_live_hls_url(station_id, hls_url),
+        '-vn',
+        '-acodec', 'libmp3lame',
+        '-b:a', '128k',
+        '-f', 'mp3',
+        'pipe:1',
+    ]
 
 def save_stations(stations):
     """放送局設定ファイル(stations.yaml)へ書き込む"""
@@ -684,6 +802,22 @@ def dashboard():
         keywords_summary=keywords_summary,
         today_matched=today_matched,
         recent_recordings=recent_recordings
+    )
+
+@app.route('/admin/live')
+def live_page():
+    """管理者向けライブ再生ページ"""
+    stations = get_enabled_stations()
+    selected_station = request.args.get('station', '').strip()
+    if selected_station and not find_station(selected_station):
+        selected_station = ''
+    if not selected_station and stations:
+        selected_station = stations[0]['station_id']
+    return render_template(
+        'live.html',
+        active_nav='live',
+        stations=stations,
+        selected_station=selected_station,
     )
 
 @app.route('/remote')
@@ -1211,6 +1345,98 @@ def api_health():
             'service': 'koeradi-archive-server',
         }
     })
+
+@app.route('/api/live/stations')
+def api_live_stations():
+    """管理画面ライブ再生用の放送局一覧API"""
+    stations = [
+        {
+            'station_id': s.get('station_id', ''),
+            'station_name': s.get('station_name') or s.get('station_id', ''),
+            'enabled': s.get('enabled', True),
+            'stream_url': url_for('api_live_stream', station_id=s.get('station_id', '')),
+        }
+        for s in get_enabled_stations()
+    ]
+    return jsonify({'ok': True, 'data': {'count': len(stations), 'stations': stations}})
+
+@app.route('/api/live/stream/<station_id>')
+def api_live_stream(station_id):
+    """radikoライブ音声をブラウザ向けMP3としてプロキシする"""
+    station = find_station(station_id)
+    if not station or not station.get('enabled', True):
+        log_live_stream({'station_id': station_id, 'status': 'failed', 'error': 'station not found or disabled'})
+        return jsonify({'ok': False, 'error': 'Station not found'}), 404
+
+    station_id = station['station_id']
+    try:
+        auth = get_radiko_auth()
+        hls_urls = get_radiko_live_playlist_urls(station_id)
+        if not hls_urls:
+            raise RuntimeError('radiko live playlist URL was not found')
+        hls_url = hls_urls[0]
+        cmd = build_live_ffmpeg_command(station_id, hls_url, auth)
+    except Exception as e:
+        log_live_stream({'station_id': station_id, 'status': 'failed', 'error': str(e)})
+        return jsonify({'ok': False, 'error': f'Live stream setup failed: {e}'}), 502
+
+    log_live_stream({
+        'station_id': station_id,
+        'station_name': station.get('station_name', station_id),
+        'status': 'starting',
+        'hls_url': hls_url,
+        'mode': 'ffmpeg_mp3_proxy',
+    })
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=BASE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+    except Exception as e:
+        log_live_stream({'station_id': station_id, 'status': 'failed', 'error': f'ffmpeg start failed: {e}'})
+        return jsonify({'ok': False, 'error': f'ffmpeg start failed: {e}'}), 502
+
+    def generate():
+        total_bytes = 0
+        error_tail = b''
+        try:
+            while True:
+                chunk = proc.stdout.read(8192)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                yield chunk
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=3)
+            returncode = proc.poll()
+            if proc.stderr:
+                try:
+                    error_tail = proc.stderr.read()[-2000:]
+                except Exception:
+                    error_tail = b''
+            log_live_stream({
+                'station_id': station_id,
+                'status': 'closed',
+                'returncode': returncode,
+                'bytes_sent': total_bytes,
+                'ffmpeg_error_tail': error_tail.decode('utf-8', errors='ignore'),
+            })
+
+    headers = {
+        'Cache-Control': 'no-store',
+        'X-Accel-Buffering': 'no',
+    }
+    return Response(stream_with_context(generate()), mimetype='audio/mpeg', headers=headers)
 
 @app.route('/api/files')
 def api_files():

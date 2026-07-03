@@ -153,6 +153,80 @@ header p {
   color: #3730a3;
 }
 
+.live-layout {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+}
+
+.live-station-list {
+  display: grid;
+  gap: 10px;
+}
+
+.live-station-button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-main);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  min-height: 48px;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.live-station-button:hover,
+.live-station-button.active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.live-selected {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.live-selected span {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.live-audio {
+  display: block;
+  width: 100%;
+}
+
+.live-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.live-error {
+  margin-top: 14px;
+}
+
+.live-note {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  margin: 14px 0 0;
+}
+
 .nav-bar {
   position: absolute;
   left: 0;
