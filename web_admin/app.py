@@ -14,6 +14,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import yaml
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort, Response, stream_with_context
+from voice_command_service import VoiceCommandService
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
@@ -1449,6 +1450,16 @@ def api_files():
             'files': files,
         }
     })
+
+@app.route('/api/voice-command')
+def api_voice_command():
+    """音声クライアント共通のコマンド判定API"""
+    def latest_recording():
+        recordings = get_recording_items()
+        return serialize_recording_item(recordings[0]) if recordings else None
+
+    service = VoiceCommandService(latest_recording)
+    return jsonify(service.handle(request.args.get('q', '')))
 
 @app.route('/api/search')
 def api_search():
