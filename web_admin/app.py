@@ -1479,7 +1479,10 @@ def api_voice_command():
     def search_recordings(query):
         return [serialize_recording_item(item) for item in search_recording_items(query)]
 
-    service = VoiceCommandService(latest_recording, search_recordings)
+    def list_recordings():
+        return [serialize_recording_item(item) for item in get_recording_items()]
+
+    service = VoiceCommandService(latest_recording, search_recordings, list_recordings)
     return jsonify(service.handle(request.args.get('q', '')))
 
 @app.route('/api/search')

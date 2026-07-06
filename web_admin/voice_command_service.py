@@ -1,3 +1,4 @@
+import datetime
 import re
 
 
@@ -38,9 +39,30 @@ class VoiceCommandService:
         '伊集院': '伊集院光',
     }
 
-    def __init__(self, latest_recording_provider, recording_search_provider=None):
+    JST = datetime.timezone(datetime.timedelta(hours=9))
+    RELATIVE_DATE_KEYWORDS = (
+        ('一昨日', 2),
+        ('昨日', 1),
+        ('今日', 0),
+    )
+    ABSOLUTE_DATE_PATTERN = re.compile(r'((?:(\d{4})年)?(\d{1,2})月(\d{1,2})日)の?')
+    RECORDING_DATE_PATTERNS = (
+        re.compile(r'(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)'),
+        re.compile(r'(?<!\d)(\d{4})/(\d{1,2})/(\d{1,2})(?!\d)'),
+        re.compile(r'(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)'),
+    )
+
+    def __init__(
+        self,
+        latest_recording_provider,
+        recording_search_provider=None,
+        recording_list_provider=None,
+        now_provider=None,
+    ):
         self.latest_recording_provider = latest_recording_provider
         self.recording_search_provider = recording_search_provider
+        self.recording_list_provider = recording_list_provider
+        self.now_provider = now_provider
 
     def handle(self, query):
         command = self._normalize_query(query)
@@ -64,11 +86,15 @@ class VoiceCommandService:
                 'message': '状態を確認します',
             }
 
-        search_query = self._extract_search_query(command)
+        date_condition, command_without_date = self._extract_date_condition(command, self._current_date_jst())
+        search_query = self._extract_search_query(command_without_date)
         if search_query:
-            return self._play_search_result(search_query)
+            return self._play_search_result(search_query, date_condition)
 
-        return self._play_search_result(command)
+        if date_condition and not command_without_date:
+            return {'ok': False, 'message': '検索語が空です'}
+
+        return self._play_search_result(command_without_date, date_condition)
 
     def _play_latest(self):
         latest = self.latest_recording_provider()
@@ -82,27 +108,46 @@ class VoiceCommandService:
             'file_id': latest['file_id'],
         }
 
-    def _play_search_result(self, search_query):
-        if not self.recording_search_provider:
+    def _play_search_result(self, search_query, date_condition=None):
+        if not self.recording_search_provider and not self.recording_list_provider:
             return {'ok': False, 'message': '対応していない音声コマンドです'}
 
         display_query, search_terms = self._normalize_search_query(search_query)
+        results = self._search_recordings(search_terms, date_condition)
+
+        if not results:
+            return {'ok': False, 'message': f'{self._format_display_query(display_query, date_condition)}の録音が見つかりません'}
+
+        recording = results[0]
+        return {
+            'ok': True,
+            'action': 'play',
+            'message': f'{self._format_display_query(display_query, date_condition)}を再生します',
+            'file_id': recording['file_id'],
+        }
+
+    def _search_recordings(self, search_terms, date_condition=None):
+        if self.recording_list_provider and (date_condition or not self.recording_search_provider):
+            candidates = self.recording_list_provider()
+            if date_condition:
+                candidates = self._filter_recordings_by_date(
+                    candidates,
+                    date_condition['date'],
+                )
+            return [
+                item for item in candidates
+                if self._recording_matches_terms(item, search_terms)
+            ]
+
         results = []
         for term in search_terms:
             results = self.recording_search_provider(term)
             if results:
                 break
 
-        if not results:
-            return {'ok': False, 'message': f'{display_query}の録音が見つかりません'}
-
-        recording = results[0]
-        return {
-            'ok': True,
-            'action': 'play',
-            'message': f'{display_query}を再生します',
-            'file_id': recording['file_id'],
-        }
+        if date_condition:
+            results = self._filter_recordings_by_date(results, date_condition['date'])
+        return results
 
     @staticmethod
     def _normalize_query(query):
@@ -115,6 +160,42 @@ class VoiceCommandService:
                 search_query = command[:-len(suffix)]
                 return search_query.strip()
         return ''
+
+    @classmethod
+    def _extract_date_condition(cls, command, today=None):
+        today = today or cls._today_jst()
+
+        for keyword, days_ago in cls.RELATIVE_DATE_KEYWORDS:
+            match = re.search(f'{keyword}の?', command)
+            if not match:
+                continue
+            target_date = today - datetime.timedelta(days=days_ago)
+            return (
+                {
+                    'date': target_date.isoformat(),
+                    'label': keyword,
+                },
+                cls._remove_match(command, match),
+            )
+
+        match = cls.ABSOLUTE_DATE_PATTERN.search(command)
+        if match:
+            year = int(match.group(2)) if match.group(2) else today.year
+            month = int(match.group(3))
+            day = int(match.group(4))
+            try:
+                target_date = datetime.date(year, month, day)
+            except ValueError:
+                return None, command
+            return (
+                {
+                    'date': target_date.isoformat(),
+                    'label': match.group(1),
+                },
+                cls._remove_match(command, match),
+            )
+
+        return None, command
 
     @classmethod
     def _normalize_search_query(cls, search_query):
@@ -135,3 +216,68 @@ class VoiceCommandService:
             if term and term not in unique:
                 unique.append(term)
         return tuple(unique)
+
+    @classmethod
+    def _today_jst(cls):
+        return datetime.datetime.now(cls.JST).date()
+
+    def _current_date_jst(self):
+        if self.now_provider:
+            now = self.now_provider()
+            if isinstance(now, datetime.datetime):
+                return now.astimezone(self.JST).date() if now.tzinfo else now.date()
+            if isinstance(now, datetime.date):
+                return now
+        return self._today_jst()
+
+    @staticmethod
+    def _remove_match(command, match):
+        return f'{command[:match.start()]}{command[match.end():]}'.strip()
+
+    @staticmethod
+    def _format_display_query(display_query, date_condition=None):
+        if not date_condition:
+            return display_query
+        return f"{date_condition['label']}の{display_query}"
+
+    @classmethod
+    def _filter_recordings_by_date(cls, recordings, target_date):
+        return [
+            item for item in recordings
+            if cls._extract_recording_date(item) == target_date
+        ]
+
+    @classmethod
+    def _extract_recording_date(cls, item):
+        date_value = str(item.get('date') or '').strip()
+        if re.fullmatch(r'\d{4}-\d{1,2}-\d{1,2}', date_value):
+            return cls._normalize_date_parts(*date_value.split('-'))
+
+        for key in ('filename', 'file_name', 'path', 'relative_path'):
+            value = str(item.get(key) or '')
+            for pattern in cls.RECORDING_DATE_PATTERNS:
+                match = pattern.search(value)
+                if match:
+                    return cls._normalize_date_parts(*match.groups())
+        return ''
+
+    @staticmethod
+    def _normalize_date_parts(year, month, day):
+        try:
+            return datetime.date(int(year), int(month), int(day)).isoformat()
+        except ValueError:
+            return ''
+
+    @staticmethod
+    def _recording_matches_terms(item, search_terms):
+        haystack = ' '.join([
+            str(item.get('title', '')),
+            str(item.get('program_name', '')),
+            str(item.get('station', '')),
+            str(item.get('station_name', '')),
+            str(item.get('filename', '')),
+            str(item.get('file_name', '')),
+            str(item.get('path', '')),
+            str(item.get('relative_path', '')),
+        ]).lower()
+        return any(str(term).lower() in haystack for term in search_terms)
