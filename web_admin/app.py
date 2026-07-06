@@ -1152,6 +1152,24 @@ def serialize_recording_item(item, detail=False):
         })
     return payload
 
+def search_recording_items(query):
+    """録音一覧を単純なキーワード部分一致で検索する"""
+    q_lower = (query or '').strip().lower()
+    if not q_lower:
+        return []
+
+    results = []
+    for item in get_recording_items():
+        haystack = ' '.join([
+            item.get('title', ''),
+            item.get('station', ''),
+            item.get('filename', ''),
+            item.get('path', ''),
+        ]).lower()
+        if q_lower in haystack:
+            results.append(item)
+    return results
+
 def parse_audio_item_from_path(abs_path, station_map):
     """metadata.json が古い場合でも実ファイルから一覧用メタデータを作る"""
     audio_dir = os.path.join(DATA_DIR, 'audio')
@@ -1458,7 +1476,10 @@ def api_voice_command():
         recordings = get_recording_items()
         return serialize_recording_item(recordings[0]) if recordings else None
 
-    service = VoiceCommandService(latest_recording)
+    def search_recordings(query):
+        return [serialize_recording_item(item) for item in search_recording_items(query)]
+
+    service = VoiceCommandService(latest_recording, search_recordings)
     return jsonify(service.handle(request.args.get('q', '')))
 
 @app.route('/api/search')
@@ -1468,18 +1489,7 @@ def api_search():
     if not query:
         return jsonify({'ok': True, 'results': [], 'data': {'count': 0, 'results': []}})
 
-    q_lower = query.lower()
-    results = []
-    for item in get_recording_items():
-        haystack = ' '.join([
-            item.get('title', ''),
-            item.get('station', ''),
-            item.get('station_id', ''),
-            item.get('date', ''),
-            item.get('filename', ''),
-        ]).lower()
-        if q_lower in haystack:
-            results.append(serialize_recording_item(item))
+    results = [serialize_recording_item(item) for item in search_recording_items(query)]
 
     return jsonify({
         'ok': True,
