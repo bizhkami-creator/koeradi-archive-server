@@ -2,6 +2,11 @@ import datetime
 import re
 
 
+# Single-user in-memory candidate state for Raspberry Pi home use.
+# Future multi-client support should key this by session_id or client_id.
+LAST_CANDIDATES = []
+
+
 class VoiceCommandService:
     """音声認識テキストを共通クライアント向けコマンドへ変換するサービス。"""
 
@@ -51,6 +56,21 @@ class VoiceCommandService:
         re.compile(r'(?<!\d)(\d{4})/(\d{1,2})/(\d{1,2})(?!\d)'),
         re.compile(r'(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)'),
     )
+    MAX_STORED_CANDIDATES = 5
+    MAX_SPOKEN_CANDIDATES = 3
+    SELECTION_COMMANDS = {
+        '1番': 1,
+        '一番': 1,
+        'いちばん': 1,
+        '2番': 2,
+        '二番': 2,
+        'にばん': 2,
+        '3番': 3,
+        '三番': 3,
+        'さんばん': 3,
+    }
+    LATEST_SELECTION_COMMAND = '最新'
+    CANCEL_SELECTION_COMMAND = 'キャンセル'
 
     def __init__(
         self,
@@ -69,7 +89,12 @@ class VoiceCommandService:
         if not command:
             return {'ok': False, 'message': '音声コマンドが空です'}
 
+        selection_response = self._handle_candidate_selection(command)
+        if selection_response:
+            return selection_response
+
         if command in self.PLAY_COMMANDS:
+            self._clear_candidates()
             return self._play_latest()
 
         if command in self.PAUSE_COMMANDS:
@@ -92,6 +117,7 @@ class VoiceCommandService:
             return self._play_search_result(search_query, date_condition)
 
         if date_condition and not command_without_date:
+            self._clear_candidates()
             return {'ok': False, 'message': '検索語が空です'}
 
         return self._play_search_result(command_without_date, date_condition)
@@ -116,8 +142,13 @@ class VoiceCommandService:
         results = self._search_recordings(search_terms, date_condition)
 
         if not results:
+            self._clear_candidates()
             return {'ok': False, 'message': f'{self._format_display_query(display_query, date_condition)}の録音が見つかりません'}
 
+        if len(results) > 1:
+            return self._select_from_search_results(results)
+
+        self._clear_candidates()
         recording = results[0]
         return {
             'ok': True,
@@ -125,6 +156,88 @@ class VoiceCommandService:
             'message': f'{self._format_display_query(display_query, date_condition)}を再生します',
             'file_id': recording['file_id'],
         }
+
+    def _handle_candidate_selection(self, command):
+        if command == self.CANCEL_SELECTION_COMMAND:
+            self._clear_candidates()
+            return {
+                'ok': True,
+                'action': 'none',
+                'message': 'キャンセルしました',
+            }
+
+        index = self.SELECTION_COMMANDS.get(command)
+        if command == self.LATEST_SELECTION_COMMAND and LAST_CANDIDATES:
+            index = 1
+        if not index:
+            return None
+
+        if not LAST_CANDIDATES:
+            return {'ok': False, 'message': '選択できる候補がありません'}
+        if index > len(LAST_CANDIDATES):
+            return {'ok': False, 'message': f'{index}番の候補はありません'}
+
+        recording = LAST_CANDIDATES[index - 1]
+        self._clear_candidates()
+        return {
+            'ok': True,
+            'action': 'play',
+            'message': f'{index}番を再生します',
+            'file_id': recording['file_id'],
+        }
+
+    def _select_from_search_results(self, results):
+        stored_candidates = results[:self.MAX_STORED_CANDIDATES]
+        self._set_candidates(stored_candidates)
+
+        spoken_candidates = stored_candidates[:self.MAX_SPOKEN_CANDIDATES]
+        spoken_parts = [
+            f'{index}番、{self._format_candidate_label(recording)}。'
+            for index, recording in enumerate(spoken_candidates, start=1)
+        ]
+        return {
+            'ok': True,
+            'action': 'select',
+            'message': f'{len(results)}件見つかりました。{"".join(spoken_parts)}番号を選んでください。',
+            'candidates': [
+                self._serialize_candidate(index, recording)
+                for index, recording in enumerate(stored_candidates, start=1)
+            ],
+        }
+
+    @staticmethod
+    def _set_candidates(candidates):
+        LAST_CANDIDATES.clear()
+        LAST_CANDIDATES.extend(candidates)
+
+    @staticmethod
+    def _clear_candidates():
+        LAST_CANDIDATES.clear()
+
+    @classmethod
+    def _serialize_candidate(cls, index, recording):
+        return {
+            'index': index,
+            'file_id': recording.get('file_id', ''),
+            'title': recording.get('title') or recording.get('program_name') or '',
+            'station': recording.get('station') or recording.get('station_name') or '',
+            'date': recording.get('date') or cls._extract_recording_date(recording),
+        }
+
+    @classmethod
+    def _format_candidate_label(cls, recording):
+        title = recording.get('title') or recording.get('program_name') or recording.get('file_name') or recording.get('filename') or '録音'
+        date_label = cls._format_candidate_date(recording.get('date') or cls._extract_recording_date(recording))
+        if date_label:
+            return f'{title} {date_label}'
+        return title
+
+    @staticmethod
+    def _format_candidate_date(date_value):
+        match = re.fullmatch(r'(\d{4})-(\d{1,2})-(\d{1,2})', str(date_value or '').strip())
+        if not match:
+            return ''
+        return f'{int(match.group(2))}月{int(match.group(3))}日'
 
     def _search_recordings(self, search_terms, date_condition=None):
         if self.recording_list_provider and (date_condition or not self.recording_search_provider):
