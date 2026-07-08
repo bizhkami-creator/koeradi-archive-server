@@ -142,6 +142,17 @@ class VoiceCommandServiceTest(unittest.TestCase):
         self.assertEqual(response['action'], 'play')
         self.assertEqual(response['file_id'], 'file-9')
 
+    def test_help_commands_return_spoken_guidance_without_action(self):
+        service = self.make_service()
+
+        for command in ('使い方', '何ができる', 'ヘルプ'):
+            with self.subTest(command=command):
+                response = service.handle(command)
+
+                self.assertTrue(response['ok'])
+                self.assertEqual(response['action'], 'none')
+                self.assertEqual(response['message'], VoiceCommandService.HELP_MESSAGE)
+
 
 if __name__ == '__main__':
     unittest.main()

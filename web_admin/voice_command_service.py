@@ -13,6 +13,8 @@ class VoiceCommandService:
     PLAY_COMMANDS = {'再生', '最新'}
     PAUSE_COMMANDS = {'止めて'}
     STATUS_COMMANDS = {'状態'}
+    HELP_COMMANDS = {'使い方', '何ができる', 'ヘルプ'}
+    HELP_MESSAGE = '番組名だけで再生できます。例えば、辛坊、TBS、昨日の辛坊、と話してください。候補が複数ある場合は、1番、2番、と話してください。停止するときは、止めて、と話してください。'
     SEARCH_SUFFIXES = (
         'を再生',
         'を探して',
@@ -88,6 +90,13 @@ class VoiceCommandService:
         command = self._normalize_query(query)
         if not command:
             return {'ok': False, 'message': '音声コマンドが空です'}
+
+        if command in self.HELP_COMMANDS:
+            return {
+                'ok': True,
+                'action': 'none',
+                'message': self.HELP_MESSAGE,
+            }
 
         selection_response = self._handle_candidate_selection(command)
         if selection_response:

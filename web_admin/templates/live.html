@@ -42,8 +42,24 @@
         <div class="live-actions">
             <button type="button" class="btn btn-primary" onclick="playSelectedStation()">この局を再生</button>
             <button type="button" class="btn btn-secondary" onclick="stopLiveAudio()">停止</button>
+            <button type="button" class="btn btn-outline" onclick="refreshCurrentProgram()">番組情報を更新</button>
         </div>
         <div id="liveError" class="alert alert-danger live-error" style="display: none;"></div>
+        <div id="currentProgramCard" class="live-program-card" aria-live="polite">
+            <div class="live-program-heading">現在再生中：</div>
+            <div id="programStationName" class="live-program-station">-</div>
+
+            <div class="live-program-heading">番組：</div>
+            <div id="programTitle" class="live-program-title">番組情報はまだ取得していません。</div>
+
+            <div class="live-program-heading">時間：</div>
+            <div id="programTime" class="live-program-text">-</div>
+
+            <div class="live-program-heading">出演：</div>
+            <div id="programPerformer" class="live-program-text">-</div>
+
+            <div id="programInfoMessage" class="live-program-message"></div>
+        </div>
         <p class="live-note">
             配信はサーバー側で radiko HLS を ffmpeg に渡し、ブラウザ向け MP3 としてプロキシします。
             再生できない場合は logs/live_stream.log を確認してください。
@@ -56,6 +72,36 @@
 <script>
     let selectedStationId = {{ selected_station|tojson }};
     let selectedStationName = '';
+
+    function setProgramInfoMessage(message, isError = false) {
+        const messageBox = document.getElementById('programInfoMessage');
+        messageBox.textContent = message || '';
+        messageBox.classList.toggle('is-error', Boolean(isError));
+    }
+
+    function renderProgramInfo(data) {
+        document.getElementById('programStationName').textContent = data.station_name || selectedStationName || '-';
+        document.getElementById('programTitle').textContent = data.title || '-';
+        document.getElementById('programTime').textContent = data.start_time && data.end_time ? `${data.start_time} - ${data.end_time}` : '-';
+        document.getElementById('programPerformer').textContent = data.performer || data.personality || '-';
+        setProgramInfoMessage('');
+    }
+
+    function renderProgramInfoUnavailable(message) {
+        document.getElementById('programStationName').textContent = selectedStationName || '-';
+        document.getElementById('programTitle').textContent = '番組情報を取得できませんでした。';
+        document.getElementById('programTime').textContent = '-';
+        document.getElementById('programPerformer').textContent = '-';
+        setProgramInfoMessage(message || 'ライブ再生は継続できます。', true);
+    }
+
+    function resetProgramInfo(message = '番組情報はまだ取得していません。') {
+        document.getElementById('programStationName').textContent = selectedStationName || '-';
+        document.getElementById('programTitle').textContent = message;
+        document.getElementById('programTime').textContent = '-';
+        document.getElementById('programPerformer').textContent = '-';
+        setProgramInfoMessage('');
+    }
 
     function setError(message) {
         const errorBox = document.getElementById('liveError');
@@ -73,6 +119,7 @@
         selectedStationName = stationName || stationId || '-';
         document.getElementById('selectedStationId').textContent = selectedStationId || '-';
         document.getElementById('selectedStationName').textContent = selectedStationName || '-';
+        resetProgramInfo();
 
         document.querySelectorAll('.live-station-button').forEach((button) => {
             button.classList.toggle('active', button.dataset.stationId === selectedStationId);
@@ -91,6 +138,7 @@
             return;
         }
         const audio = document.getElementById('liveAudio');
+        refreshCurrentProgram();
         audio.src = `/api/live/stream/${encodeURIComponent(selectedStationId)}`;
         audio.load();
         const playPromise = audio.play();
@@ -106,6 +154,25 @@
         audio.pause();
         audio.removeAttribute('src');
         audio.load();
+    }
+
+    function refreshCurrentProgram() {
+        if (!selectedStationId) {
+            renderProgramInfoUnavailable('再生する局を選択してください。');
+            return;
+        }
+        resetProgramInfo('番組情報を取得中です...');
+        fetch(`/api/live/current-program/${encodeURIComponent(selectedStationId)}`)
+            .then((response) => response.json())
+            .then((payload) => {
+                if (!payload.ok) {
+                    throw new Error(payload.error || 'Current program not found');
+                }
+                renderProgramInfo(payload.data || {});
+            })
+            .catch((error) => {
+                renderProgramInfoUnavailable(`ライブ再生は継続できます。詳細: ${error.message}`);
+            });
     }
 
     function renderStations(stations) {
@@ -159,6 +226,7 @@
         const first = document.querySelector(`.live-station-button[data-station-id="${selectedStationId}"]`) || document.querySelector('.live-station-button');
         if (first) {
             updateSelectedStation(first.dataset.stationId, first.dataset.stationName);
+            refreshCurrentProgram();
         }
     });
 </script>

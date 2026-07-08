@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import gzip
 import hashlib
 import shutil
 import datetime
@@ -31,6 +32,7 @@ DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
 LIVE_STREAM_LOG = os.path.join(LOGS_DIR, 'live_stream.log')
 AUDIO_EXTENSIONS = ('.m4a', '.mp3', '.wav', '.aac')
 RADIKO_AUTHKEY_VALUE = 'bcd151073c03b352e1ef2fd66c32209da9ca0afa'
+JST = datetime.timezone(datetime.timedelta(hours=9))
 
 ADMIN_NAV = [
     {'key': 'dashboard', 'label': 'ダッシュボード', 'endpoint': 'dashboard'},
@@ -301,6 +303,129 @@ def build_live_ffmpeg_command(station_id, hls_url, auth):
         '-f', 'mp3',
         'pipe:1',
     ]
+
+def parse_radiko_datetime(dt_str):
+    """radikoのYYYYMMDDHHMMSSをJSTのaware datetimeに変換する"""
+    return datetime.datetime.strptime(dt_str, '%Y%m%d%H%M%S').replace(tzinfo=JST)
+
+def format_live_program_time(dt):
+    return dt.astimezone(JST).strftime('%H:%M')
+
+def load_cached_program_guide(station_id, date_str):
+    guide_path = os.path.join(DATA_DIR, 'program_guides', station_id, f'{date_str}.json')
+    if not os.path.exists(guide_path):
+        return None
+    with open(guide_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def save_program_guide(station_id, date_str, programs):
+    output_dir = os.path.join(DATA_DIR, 'program_guides', station_id)
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f'{date_str}.json')
+    payload = {
+        'station_id': station_id,
+        'date': date_str,
+        'programs': programs,
+    }
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+def fetch_program_guide_data(station_id, date_str):
+    """radiko番組表XMLを取得し、既存JSON形式に近いリストへ変換する"""
+    clean_date = date_str.replace('-', '')
+    if len(clean_date) != 8:
+        raise ValueError('date_str must be YYYY-MM-DD')
+
+    url = f'https://radiko.jp/v3/program/station/date/{clean_date}/{station_id}.xml'
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'KoeRadi-Archive/1.0',
+        'Accept-Encoding': 'gzip',
+    })
+    with urllib.request.urlopen(req, timeout=10) as res:
+        xml_data = res.read()
+        content_encoding = res.headers.get('Content-Encoding', '')
+        if content_encoding == 'gzip' or xml_data.startswith(b'\x1f\x8b'):
+            xml_data = gzip.decompress(xml_data)
+
+    root = ET.fromstring(xml_data)
+    programs = []
+    for prog in root.findall('.//prog'):
+        ft = prog.attrib.get('ft')
+        to = prog.attrib.get('to')
+        if not ft or not to:
+            continue
+        try:
+            start_dt = parse_radiko_datetime(ft)
+            end_dt = parse_radiko_datetime(to)
+        except ValueError:
+            continue
+
+        programs.append({
+            'title': prog.findtext('title', default='').strip(),
+            'start_time': start_dt.strftime('%Y-%m-%dT%H:%M:%S'),
+            'end_time': end_dt.strftime('%Y-%m-%dT%H:%M:%S'),
+            'duration_minutes': int((end_dt - start_dt).total_seconds() // 60),
+            'personality': prog.findtext('pfm', default='').strip(),
+            'description': prog.findtext('desc', default='').strip(),
+        })
+    save_program_guide(station_id, date_str, programs)
+    return {'station_id': station_id, 'date': date_str, 'programs': programs}
+
+def parse_guide_time(value):
+    if not value:
+        return None
+    try:
+        if re.fullmatch(r'\d{14}', value):
+            return parse_radiko_datetime(value)
+        return datetime.datetime.strptime(value[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=JST)
+    except ValueError:
+        return None
+
+def find_current_program_in_guide(guide_data, now):
+    for prog in guide_data.get('programs', []):
+        start_dt = parse_guide_time(prog.get('start_time') or prog.get('ft'))
+        end_dt = parse_guide_time(prog.get('end_time') or prog.get('to'))
+        if start_dt and end_dt and start_dt <= now < end_dt:
+            return prog, start_dt, end_dt
+    return None, None, None
+
+def get_current_program(station_id, now=None):
+    station = find_station(station_id)
+    if not station or not station.get('enabled', True):
+        return None, 'Station not found'
+
+    now = (now or datetime.datetime.now(JST)).astimezone(JST)
+    target_dates = [
+        now.strftime('%Y-%m-%d'),
+        (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+    ]
+    last_error = None
+
+    for date_str in target_dates:
+        guide_data = load_cached_program_guide(station['station_id'], date_str)
+        if guide_data is None:
+            try:
+                guide_data = fetch_program_guide_data(station['station_id'], date_str)
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        prog, start_dt, end_dt = find_current_program_in_guide(guide_data, now)
+        if prog:
+            performer = prog.get('personality') or prog.get('performer') or ''
+            return {
+                'station_id': station['station_id'],
+                'station_name': station.get('station_name') or station['station_id'],
+                'title': prog.get('title') or prog.get('program_name') or '',
+                'start_time': format_live_program_time(start_dt),
+                'end_time': format_live_program_time(end_dt),
+                'performer': performer,
+                'personality': performer,
+            }, None
+
+    if last_error:
+        return None, f'Current program not found: {last_error}'
+    return None, 'Current program not found'
 
 def save_stations(stations):
     """放送局設定ファイル(stations.yaml)へ書き込む"""
@@ -1260,9 +1385,21 @@ def scan_audio_recording_items():
 @app.route('/admin/recordings')
 def recordings_page():
     """録音一覧ページ (検索・フィルター・再生)"""
+    sort_options = [
+        ('date_desc', '日付が新しい順'),
+        ('date_asc', '日付が古い順'),
+        ('name_asc', 'ファイル名 昇順'),
+        ('name_desc', 'ファイル名 降順'),
+        ('size_desc', 'サイズが大きい順'),
+        ('size_asc', 'サイズが小さい順'),
+    ]
+    valid_sort_keys = {key for key, _label in sort_options}
     selected_station = request.args.get('station', '').strip()
     selected_date = request.args.get('date', '').strip()
     query = request.args.get('q', '').strip()
+    selected_sort = request.args.get('sort', 'date_desc').strip()
+    if selected_sort not in valid_sort_keys:
+        selected_sort = 'date_desc'
     deleted_count = request.args.get('deleted', '').strip()
     delete_errors = request.args.get('delete_errors', '').strip()
     trash_dir = request.args.get('trash_dir', '').strip()
@@ -1289,8 +1426,16 @@ def recordings_page():
                 continue
         filtered_items.append(item)
         
-    # 日付・ファイル名で降順ソート
-    filtered_items.sort(key=lambda x: (x['date'], x['file_name']), reverse=True)
+    sort_handlers = {
+        'date_desc': (lambda x: (x.get('date', ''), x.get('file_name', '')), True),
+        'date_asc': (lambda x: (x.get('date', ''), x.get('file_name', '')), False),
+        'name_asc': (lambda x: (x.get('file_name', '').lower(), x.get('date', '')), False),
+        'name_desc': (lambda x: (x.get('file_name', '').lower(), x.get('date', '')), True),
+        'size_desc': (lambda x: (x.get('size_bytes') or 0, x.get('date', ''), x.get('file_name', '')), True),
+        'size_asc': (lambda x: (x.get('size_bytes') or 0, x.get('date', ''), x.get('file_name', '')), False),
+    }
+    sort_key, sort_reverse = sort_handlers[selected_sort]
+    filtered_items.sort(key=sort_key, reverse=sort_reverse)
     
     stations_list = sorted(list(stations_set))
     dates_list = sorted(list(dates_set), reverse=True)
@@ -1305,6 +1450,8 @@ def recordings_page():
         dates=dates_list,
         selected_station=selected_station,
         selected_date=selected_date,
+        selected_sort=selected_sort,
+        sort_options=sort_options,
         query=query,
         total_count=len(filtered_items),
         deleted_count=deleted_count,
@@ -1378,6 +1525,14 @@ def api_live_stations():
         for s in get_enabled_stations()
     ]
     return jsonify({'ok': True, 'data': {'count': len(stations), 'stations': stations}})
+
+@app.route('/api/live/current-program/<station_id>')
+def api_live_current_program(station_id):
+    """選択中の放送局で現在放送中の番組情報を返す"""
+    data, error = get_current_program(station_id)
+    if error:
+        return jsonify({'ok': False, 'error': error})
+    return jsonify({'ok': True, 'data': data})
 
 @app.route('/api/live/stream/<station_id>')
 def api_live_stream(station_id):

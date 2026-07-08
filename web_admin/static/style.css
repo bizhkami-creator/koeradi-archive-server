@@ -221,6 +221,47 @@ header p {
   margin-top: 14px;
 }
 
+.live-program-card {
+  background: #f8fafc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.live-program-heading {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.live-program-station,
+.live-program-title {
+  color: var(--text-main);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.live-program-text {
+  color: var(--text-main);
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.live-program-message {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.live-program-message.is-error {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
 .live-note {
   color: var(--text-muted);
   font-size: 0.92rem;

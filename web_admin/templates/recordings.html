@@ -35,6 +35,15 @@
             <input type="text" id="q" name="q" value="{{ query }}" placeholder="番組名・ファイル名で検索..." class="form-control">
         </div>
 
+        <div class="filter-group">
+            <label for="sort">ソート順</label>
+            <select id="sort" name="sort" class="form-control">
+                {% for value, label in sort_options %}
+                <option value="{{ value }}" {% if selected_sort == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
         <div class="filter-buttons">
             <button type="submit" class="btn btn-primary">検索</button>
             <a href="{{ url_for('files_page') }}" class="btn btn-outline">リセット</a>

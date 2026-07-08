@@ -32,3 +32,12 @@ rules:
 - name: ひろゆき
   keyword: ひろゆき
   enabled: true
+- name: 日経電子版NEWS
+  keyword: 日経電子版NEWS
+  enabled: true
+- name: KOO
+  keyword: KOO
+  enabled: true
+- name: バカリズム
+  keyword: バカリズム
+  enabled: true
