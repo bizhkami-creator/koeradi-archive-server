@@ -7,3 +7,5 @@ scheduler:
   hour: 0
   minute: 0
   lookback_days: 7
+storage:
+  trash_dir: data/trash

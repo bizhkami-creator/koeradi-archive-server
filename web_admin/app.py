@@ -13,6 +13,7 @@ import secrets
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+from pathlib import Path
 import yaml
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort, Response, stream_with_context
 from voice_command_service import VoiceCommandService
@@ -29,6 +30,7 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
 DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
+TRASH_EMPTY_LOG = os.path.join(LOGS_DIR, 'trash_empty.log')
 LIVE_STREAM_LOG = os.path.join(LOGS_DIR, 'live_stream.log')
 AUDIO_EXTENSIONS = ('.m4a', '.mp3', '.wav', '.aac')
 RADIKO_AUTHKEY_VALUE = 'bcd151073c03b352e1ef2fd66c32209da9ca0afa'
@@ -54,6 +56,9 @@ DEFAULT_SETTINGS = {
         'hour': 3,
         'minute': 0,
         'lookback_days': 7
+    },
+    'storage': {
+        'trash_dir': 'data/trash'
     }
 }
 
@@ -94,6 +99,7 @@ def merge_settings(raw):
     raw = raw or {}
     drive = raw.get('drive') or {}
     scheduler = raw.get('scheduler') or {}
+    storage = raw.get('storage') or {}
 
     mode = scheduler.get('mode', DEFAULT_SETTINGS['scheduler']['mode'])
     if mode not in VALID_SCHEDULER_MODES:
@@ -133,6 +139,9 @@ def merge_settings(raw):
             'hour': hour,
             'minute': minute,
             'lookback_days': lookback_days,
+        },
+        'storage': {
+            'trash_dir': str(storage.get('trash_dir') or DEFAULT_SETTINGS['storage']['trash_dir'])
         }
     }
 
@@ -673,23 +682,73 @@ def get_recorded_count():
                 count += 1
     return count
 
+def is_path_inside(child, parent):
+    """child が parent 配下にあるか、resolve 済みパスで判定する"""
+    try:
+        return os.path.commonpath([str(child), str(parent)]) == str(parent)
+    except ValueError:
+        return False
+
+def get_configured_trash_dir():
+    """settings.yaml の storage.trash_dir からゴミ箱ディレクトリを取得する"""
+    settings = load_settings()
+    trash_value = ((settings.get('storage') or {}).get('trash_dir') or '').strip()
+    if not trash_value:
+        return None, 'ゴミ箱パスが未設定です。'
+
+    raw_path = Path(trash_value).expanduser()
+    if not raw_path.is_absolute():
+        raw_path = Path(BASE_DIR) / raw_path
+
+    try:
+        trash_path = raw_path.resolve()
+    except Exception as e:
+        return None, f'ゴミ箱パスを解決できません: {e}'
+
+    base_path = Path(BASE_DIR).resolve()
+    data_path = Path(DATA_DIR).resolve()
+    audio_path = (data_path / 'audio').resolve()
+    home_path = Path.home().resolve()
+    forbidden_paths = {Path('/').resolve(), home_path, base_path, data_path, audio_path}
+    if trash_path in forbidden_paths:
+        return None, 'ゴミ箱パスが危険な場所を指しています。'
+    if trash_path == trash_path.parent:
+        return None, 'ゴミ箱パスが不正です。'
+
+    return trash_path, None
+
 def get_trash_stats():
-    """data/trash 配下の容量とファイル件数を取得する"""
-    trash_dir = os.path.join(DATA_DIR, 'trash')
-    if not os.path.exists(trash_dir):
-        return {'count': 0, 'size_bytes': 0, 'size': format_size(0)}
+    """ゴミ箱配下の容量とファイル件数を取得する"""
+    trash_dir, error = get_configured_trash_dir()
+    if error or not trash_dir.exists():
+        return {'count': 0, 'size_bytes': 0, 'size': format_size(0), 'path': '', 'error': error}
 
     count = 0
     size_bytes = 0
-    for root, dirs, files in os.walk(trash_dir):
-        for file in files:
-            path = os.path.join(root, file)
+    stack = [trash_dir]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
             try:
-                size_bytes += os.path.getsize(path)
-                count += 1
+                stat_result = entry.lstat()
+                if entry.is_symlink() or entry.is_file():
+                    size_bytes += stat_result.st_size
+                    count += 1
+                elif entry.is_dir():
+                    stack.append(entry)
             except OSError:
                 pass
-    return {'count': count, 'size_bytes': size_bytes, 'size': format_size(size_bytes)}
+    return {
+        'count': count,
+        'size_bytes': size_bytes,
+        'size': format_size(size_bytes),
+        'path': os.path.relpath(trash_dir, BASE_DIR),
+        'error': None,
+    }
 
 def get_keywords_summary():
     """登録キーワードの有効/無効/合計件数を取得"""
@@ -793,6 +852,17 @@ def log_delete_recordings(event):
     with open(DELETE_RECORDINGS_LOG, 'a', encoding='utf-8') as f:
         f.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
+def log_trash_empty(event, level='INFO'):
+    """ゴミ箱完全削除操作ログをJSON Linesで記録する"""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    payload = {
+        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'level': level,
+        **event,
+    }
+    with open(TRASH_EMPTY_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + '\n')
+
 def resolve_audio_relative_path(relative_path):
     """metadata由来の relative_path が data/audio 配下の実ファイルか検証して返す"""
     rel = (relative_path or '').strip().replace('\\', '/')
@@ -808,6 +878,146 @@ def resolve_audio_relative_path(relative_path):
     if not os.path.exists(abs_path) or os.path.isdir(abs_path):
         return rel, abs_path, 'ファイルが存在しません。'
     return rel, abs_path, None
+
+def assert_trash_child_path(path, trash_root):
+    """削除対象がゴミ箱配下にあることを確認する"""
+    try:
+        if path.is_symlink():
+            parent = path.parent.resolve()
+            if parent == trash_root or is_path_inside(parent, trash_root):
+                return True, None
+            return False, 'シンボリックリンクがゴミ箱外にあります。'
+
+        resolved = path.resolve()
+        if resolved == trash_root or is_path_inside(resolved, trash_root):
+            return True, None
+        return False, '削除対象がゴミ箱外を指しています。'
+    except Exception as e:
+        return False, str(e)
+
+def empty_trash_directory():
+    """ゴミ箱ディレクトリの中身だけを完全削除する"""
+    trash_root, error = get_configured_trash_dir()
+    if error:
+        event = {
+            'operation': 'empty_trash',
+            'success_count': 0,
+            'failure_count': 1,
+            'failures': [{'path': '', 'error': error}],
+            'success': False,
+        }
+        log_trash_empty(event, level='ERROR')
+        return {**event, 'empty': False, 'error': error}
+
+    if trash_root.exists() and trash_root.is_symlink():
+        error = 'ゴミ箱ディレクトリがシンボリックリンクです。'
+        event = {
+            'operation': 'empty_trash',
+            'trash_dir': str(trash_root),
+            'success_count': 0,
+            'failure_count': 1,
+            'failures': [{'path': str(trash_root), 'error': error}],
+            'success': False,
+        }
+        log_trash_empty(event, level='ERROR')
+        return {**event, 'empty': False, 'error': error}
+
+    if not trash_root.exists():
+        event = {
+            'operation': 'empty_trash',
+            'trash_dir': str(trash_root),
+            'success_count': 0,
+            'failure_count': 0,
+            'failures': [],
+            'success': True,
+        }
+        log_trash_empty(event, level='INFO')
+        return {**event, 'empty': True}
+
+    if not trash_root.is_dir():
+        error = 'ゴミ箱パスがディレクトリではありません。'
+        event = {
+            'operation': 'empty_trash',
+            'trash_dir': str(trash_root),
+            'success_count': 0,
+            'failure_count': 1,
+            'failures': [{'path': str(trash_root), 'error': error}],
+            'success': False,
+        }
+        log_trash_empty(event, level='ERROR')
+        return {**event, 'empty': False, 'error': error}
+
+    success_count = 0
+    failures = []
+
+    def delete_entry(path):
+        nonlocal success_count
+        safe, safe_error = assert_trash_child_path(path, trash_root)
+        if not safe:
+            failures.append({'path': str(path), 'error': safe_error})
+            return
+
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+                success_count += 1
+                return
+            if path.is_dir():
+                for child in list(path.iterdir()):
+                    delete_entry(child)
+                try:
+                    path.rmdir()
+                except Exception as e:
+                    failures.append({'path': str(path), 'error': str(e)})
+                return
+            path.unlink()
+            success_count += 1
+        except Exception as e:
+            failures.append({'path': str(path), 'error': str(e)})
+
+    try:
+        entries = list(trash_root.iterdir())
+    except Exception as e:
+        event = {
+            'operation': 'empty_trash',
+            'trash_dir': str(trash_root),
+            'success_count': 0,
+            'failure_count': 1,
+            'failures': [{'path': str(trash_root), 'error': str(e)}],
+            'success': False,
+        }
+        log_trash_empty(event, level='ERROR')
+        return {**event, 'empty': False, 'error': str(e)}
+
+    if not entries:
+        event = {
+            'operation': 'empty_trash',
+            'trash_dir': str(trash_root),
+            'success_count': 0,
+            'failure_count': 0,
+            'failures': [],
+            'success': True,
+        }
+        log_trash_empty(event, level='INFO')
+        return {**event, 'empty': True}
+
+    for entry in entries:
+        delete_entry(entry)
+
+    failure_count = len(failures)
+    event = {
+        'operation': 'empty_trash',
+        'trash_dir': str(trash_root),
+        'success_count': success_count,
+        'failure_count': failure_count,
+        'failures': failures,
+        'success': failure_count == 0,
+    }
+    if failure_count:
+        log_trash_empty(event, level='WARNING' if success_count else 'ERROR')
+    else:
+        log_trash_empty(event, level='INFO')
+    return {**event, 'empty': False}
 
 def delete_remote_recording(relative_path):
     """Google Drive側の対象ファイルを削除する"""
@@ -830,12 +1040,30 @@ def regenerate_metadata():
 def move_recordings_to_trash(relative_paths, delete_drive=False):
     """選択された録音ファイルを trash へ移動し、必要ならGoogle Drive側も削除する"""
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    trash_root = os.path.join(DATA_DIR, 'trash', timestamp)
-    os.makedirs(trash_root, exist_ok=True)
+    trash_dir, trash_error = get_configured_trash_dir()
 
     deleted = []
     failures = []
     drive_results = []
+
+    if trash_error:
+        failures.append({'relative_path': 'trash_dir', 'error': trash_error})
+        event = {
+            'requested_count': len(relative_paths),
+            'deleted_count': 0,
+            'deleted_files': deleted,
+            'trash_dir': '',
+            'delete_drive': delete_drive,
+            'drive_results': drive_results,
+            'metadata_result': None,
+            'success': False,
+            'failures': failures,
+        }
+        log_delete_recordings(event)
+        return event
+
+    trash_root = trash_dir / timestamp
+    os.makedirs(trash_root, exist_ok=True)
 
     for raw_rel in relative_paths:
         rel, abs_path, error = resolve_audio_relative_path(raw_rel)
@@ -843,11 +1071,11 @@ def move_recordings_to_trash(relative_paths, delete_drive=False):
             failures.append({'relative_path': raw_rel, 'error': error})
             continue
 
-        dest_path = os.path.join(trash_root, rel)
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        dest_path = trash_root / rel
+        os.makedirs(dest_path.parent, exist_ok=True)
         try:
             shutil.move(abs_path, dest_path)
-            deleted.append({'relative_path': rel, 'trash_path': os.path.relpath(dest_path, DATA_DIR)})
+            deleted.append({'relative_path': rel, 'trash_path': os.path.relpath(dest_path, BASE_DIR)})
         except Exception as e:
             failures.append({'relative_path': rel, 'error': f'trash移動失敗: {e}'})
             continue
@@ -886,7 +1114,7 @@ def move_recordings_to_trash(relative_paths, delete_drive=False):
         'requested_count': len(relative_paths),
         'deleted_count': len(deleted),
         'deleted_files': deleted,
-        'trash_dir': os.path.relpath(trash_root, DATA_DIR),
+        'trash_dir': os.path.relpath(trash_root, BASE_DIR),
         'delete_drive': delete_drive,
         'drive_results': drive_results,
         'metadata_result': metadata_result,
@@ -1403,8 +1631,13 @@ def recordings_page():
     deleted_count = request.args.get('deleted', '').strip()
     delete_errors = request.args.get('delete_errors', '').strip()
     trash_dir = request.args.get('trash_dir', '').strip()
+    trash_message = request.args.get('trash_message', '').strip()
+    trash_message_type = request.args.get('trash_message_type', 'info').strip()
+    if trash_message_type not in {'success', 'warning', 'danger', 'info'}:
+        trash_message_type = 'info'
 
     items = get_recording_items()
+    trash_stats = get_trash_stats()
     stations_set = {item['station_name'] for item in items if item['station_name'] and item['station_name'] != 'unknown'}
     dates_set = {item['date'] for item in items if item['date'] and item['date'] != 'unknown'}
 
@@ -1456,7 +1689,10 @@ def recordings_page():
         total_count=len(filtered_items),
         deleted_count=deleted_count,
         delete_errors=delete_errors,
-        trash_dir=trash_dir
+        trash_dir=trash_dir,
+        trash_stats=trash_stats,
+        trash_message=trash_message,
+        trash_message_type=trash_message_type
     )
 
 @app.route('/recordings/delete', methods=['POST'])
@@ -1477,6 +1713,29 @@ def delete_recordings():
     if result['failures']:
         args['delete_errors'] = f"{len(result['failures'])}件のエラーがあります。logs/delete_recordings.log を確認してください。"
     return redirect(url_for('files_page', **args))
+
+@app.route('/trash/empty', methods=['POST'])
+@app.route('/admin/files/trash/empty', methods=['POST'])
+def empty_trash():
+    """ゴミ箱の中身を完全削除する。GETでは実行しない。"""
+    result = empty_trash_directory()
+    success_count = result.get('success_count', 0)
+    failure_count = result.get('failure_count', 0)
+
+    if result.get('empty') and failure_count == 0:
+        message = 'ゴミ箱は空です。'
+        message_type = 'info'
+    elif failure_count == 0:
+        message = f'ゴミ箱内の{success_count}件のファイルを完全に削除しました。'
+        message_type = 'success'
+    elif success_count > 0:
+        message = f'{success_count}件を削除しました。{failure_count}件の削除に失敗しました。'
+        message_type = 'warning'
+    else:
+        message = 'ゴミ箱を空にできませんでした。ログを確認してください。'
+        message_type = 'danger'
+
+    return redirect(url_for('files_page', trash_message=message, trash_message_type=message_type))
 
 @app.route('/admin/files')
 def files_page():
@@ -1961,6 +2220,7 @@ def logs_page():
         {'key': 'manual', 'label': '手動録音ログ', 'filename': 'manual_recording.log'},
         {'key': 'settings', 'label': '設定ジョブログ', 'filename': 'settings_jobs.log'},
         {'key': 'delete', 'label': 'ファイル削除ログ', 'filename': 'delete_recordings.log'},
+        {'key': 'trash', 'label': 'ゴミ箱完全削除ログ', 'filename': 'trash_empty.log'},
         {'key': 'sync', 'label': '同期ログ', 'filename': 'sync_drive.log'},
     ]
     selected = request.args.get('log', 'scheduler')

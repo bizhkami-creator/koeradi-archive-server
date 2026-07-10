@@ -241,6 +241,7 @@ select,
   .filter-buttons,
   .test-actions,
   .delete-actions,
+  .trash-actions,
   .bulk-actions,
   .admin-section-links {
     gap: 10px;
@@ -251,6 +252,7 @@ select,
   .filter-buttons .btn,
   .test-actions .btn,
   .delete-actions .btn,
+  .trash-actions .btn,
   .admin-section-links a {
     width: 100%;
   }
@@ -268,6 +270,7 @@ select,
   .filter-form,
   .settings-row,
   .delete-actions,
+  .trash-actions,
   .bulk-actions {
     align-items: stretch;
   }

@@ -55,6 +55,27 @@
     <span>該当件数: <strong>{{ total_count }}</strong> 件</span>
 </div>
 
+<div class="trash-actions card">
+    <div>
+        <strong>ゴミ箱: {{ trash_stats.count }}件 / {{ trash_stats.size }}</strong>
+        {% if trash_stats.path %}
+        <p class="settings-help">保存先: {{ trash_stats.path }}</p>
+        {% endif %}
+        {% if trash_stats.error %}
+        <p class="settings-help">ゴミ箱設定エラー: {{ trash_stats.error }}</p>
+        {% endif %}
+    </div>
+    <form action="{{ url_for('empty_trash') }}" method="POST" id="empty-trash-form">
+        <button type="submit" class="btn btn-danger" {% if trash_stats.count == 0 or trash_stats.error %}disabled{% endif %}>ゴミ箱を空にする</button>
+    </form>
+</div>
+
+{% if trash_message %}
+<div class="alert alert-{{ trash_message_type }}">
+    {{ trash_message }}
+</div>
+{% endif %}
+
 {% if deleted_count %}
 <div class="alert alert-success">
     {{ deleted_count }} 件の録音ファイルを trash へ移動しました。
@@ -170,6 +191,23 @@
             }
         });
         updateSelectedCount();
+    }
+
+    const emptyTrashForm = document.getElementById('empty-trash-form');
+    if (emptyTrashForm) {
+        emptyTrashForm.addEventListener('submit', function(event) {
+            const count = {{ trash_stats.count|default(0) }};
+            if (count === 0) {
+                alert('ゴミ箱は空です。');
+                event.preventDefault();
+                return;
+            }
+
+            const message = 'ゴミ箱内の' + count + '件のファイルを完全に削除します。\\n\\nこの操作は元に戻せません。実行しますか？';
+            if (!confirm(message)) {
+                event.preventDefault();
+            }
+        });
     }
 </script>
 {% endblock %}
