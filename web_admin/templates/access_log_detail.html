@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}アクセスログ詳細 #{{ log.id }}{% endblock %}
+{% block page_title %}アクセスログ詳細{% endblock %}
+{% block page_description %}ログ番号 {{ log.id }} の記録内容です。スタックトレースや秘密情報は保存・表示しません。{% endblock %}
+{% block page_actions %}<a class="btn btn-outline" href="{{ url_for('access_logs_page') }}">一覧へ戻る</a>{% endblock %}
+{% block content %}<div class="card"><dl class="detail-list">
+  {% for label, value in [
+    ('発生日時', log.timestamp), ('種別', log.event_type), ('HTTPメソッド', log.http_method),
+    ('URL', log.path), ('ステータスコード', log.status_code), ('IPアドレス', log.ip_address),
+    ('端末情報', log.device_name), ('User-Agent', log.user_agent), ('処理時間(ms)', log.response_time_ms),
+    ('検索条件', log.query), ('放送局', log.radio_station), ('番組名', log.program_name),
+    ('放送日', log.broadcast_date), ('対象ファイル', log.file_name or log.file_path),
+    ('Range', log.range_header), ('応答サイズ(byte)', log.response_size),
+    ('エラー種別', log.error_type), ('エラーメッセージ', log.error_message)
+  ] %}<dt>{{ label }}</dt><dd>{{ value if value is not none and value != '' else '-' }}</dd>{% endfor %}
+</dl></div>{% endblock %}

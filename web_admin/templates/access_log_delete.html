@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}アクセスログ削除確認{% endblock %}
+{% block page_title %}アクセスログ削除確認{% endblock %}
+{% block page_description %}削除したアクセスログは元に戻せません{% endblock %}
+{% block page_actions %}<a class="btn btn-outline" href="{{ url_for('access_logs_page') }}">キャンセルして戻る</a>{% endblock %}
+{% block content %}
+<div class="card"><h2 class="card-title">指定日以前のログを削除</h2><form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="mode" value="before">
+  <div class="form-group"><label for="before_date">この日より前のログを削除</label><input class="form-control" type="date" id="before_date" name="before_date" required></div>
+  <button class="btn btn-danger" type="submit">指定日以前のアクセスログを削除</button>
+</form></div>
+<div class="card danger-zone"><h2 class="card-title">すべて削除</h2><p><strong>アクセスログをすべて削除します。この操作は元に戻せません。</strong></p><form method="post" onsubmit="return confirm('アクセスログをすべて削除します。この操作は元に戻せません。');">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="mode" value="all">
+  <button class="btn btn-danger" type="submit">すべてのアクセスログを削除</button>
+</form></div>
+{% endblock %}

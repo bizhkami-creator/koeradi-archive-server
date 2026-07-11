@@ -88,6 +88,73 @@ select,
   overflow-x: auto;
 }
 
+.access-log-filters {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.filter-actions,
+.filter-buttons,
+.pagination {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.pagination {
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.access-log-table code,
+.detail-list dd {
+  overflow-wrap: anywhere;
+}
+
+.log-error-row,
+.stat-card-error,
+.danger-zone {
+  border-left: 4px solid #dc2626;
+}
+
+.error-text {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.detail-list {
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+}
+
+.detail-list dt,
+.detail-list dd {
+  border-bottom: 1px solid #e2e8f0;
+  margin: 0;
+  padding: 10px;
+}
+
+.detail-list dt {
+  font-weight: 700;
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 @media (max-width: 900px) {
   .admin-shell {
     grid-template-columns: 200px minmax(0, 1fr);

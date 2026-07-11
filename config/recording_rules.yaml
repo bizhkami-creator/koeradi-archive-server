@@ -38,6 +38,3 @@ rules:
 - name: KOO
   keyword: KOO
   enabled: true
-- name: バカリズム
-  keyword: バカリズム
-  enabled: true

@@ -12,14 +12,22 @@ import base64
 import secrets
 import urllib.request
 import urllib.parse
+import csv
+import functools
+import hmac
+import io
+import math
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import yaml
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort, Response, stream_with_context
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory, send_file, abort, Response, stream_with_context, g, session, got_request_exception
 from voice_command_service import VoiceCommandService
+from access_log_store import AccessLogStore, client_ip, device_name, masked_query, json_details
 
 # Flaskアプリケーションの初期化
 app = Flask(__name__)
+app.secret_key = os.environ.get('KOERADI_SECRET_KEY') or secrets.token_hex(32)
 
 # プロジェクトのルートディレクトリおよび各種パスの設定
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +40,7 @@ SETTINGS_JOBS_LOG = os.path.join(LOGS_DIR, 'settings_jobs.log')
 DELETE_RECORDINGS_LOG = os.path.join(LOGS_DIR, 'delete_recordings.log')
 TRASH_EMPTY_LOG = os.path.join(LOGS_DIR, 'trash_empty.log')
 LIVE_STREAM_LOG = os.path.join(LOGS_DIR, 'live_stream.log')
+ACCESS_LOG_DB = os.path.join(LOGS_DIR, 'access_logs.sqlite3')
 AUDIO_EXTENSIONS = ('.m4a', '.mp3', '.wav', '.aac')
 RADIKO_AUTHKEY_VALUE = 'bcd151073c03b352e1ef2fd66c32209da9ca0afa'
 JST = datetime.timezone(datetime.timedelta(hours=9))
@@ -41,6 +50,7 @@ ADMIN_NAV = [
     {'key': 'live', 'label': 'ライブ再生', 'endpoint': 'live_page'},
     {'key': 'jobs', 'label': '録音管理', 'endpoint': 'jobs_page'},
     {'key': 'files', 'label': 'ファイル管理', 'endpoint': 'files_page'},
+    {'key': 'access_logs', 'label': 'アクセスログ', 'endpoint': 'access_logs_page'},
     {'key': 'settings', 'label': '設定', 'endpoint': 'settings_page'},
     {'key': 'logs', 'label': 'ログ', 'endpoint': 'logs_page'},
 ]
@@ -59,12 +69,18 @@ DEFAULT_SETTINGS = {
     },
     'storage': {
         'trash_dir': 'data/trash'
+    },
+    'access_logs': {
+        'retention_days': 90,
+        'search_query_policy': 'full'
     }
 }
 
 VALID_SCHEDULER_MODES = {'filtered', 'full'}
 VALID_SCHEDULER_INTERVALS = {'hourly', 'every_6_hours', 'daily', 'weekly'}
 VALID_LOOKBACK_DAYS = {1, 3, 7}
+VALID_ACCESS_LOG_RETENTION_DAYS = {30, 90, 180, None}
+VALID_SEARCH_QUERY_POLICIES = {'full', 'none', 'masked'}
 
 JOB_COMMANDS = {
     'dry_run_yesterday': {
@@ -100,6 +116,7 @@ def merge_settings(raw):
     drive = raw.get('drive') or {}
     scheduler = raw.get('scheduler') or {}
     storage = raw.get('storage') or {}
+    access_logs = raw.get('access_logs') or {}
 
     mode = scheduler.get('mode', DEFAULT_SETTINGS['scheduler']['mode'])
     if mode not in VALID_SCHEDULER_MODES:
@@ -128,6 +145,21 @@ def merge_settings(raw):
     if lookback_days not in VALID_LOOKBACK_DAYS:
         lookback_days = DEFAULT_SETTINGS['scheduler']['lookback_days']
 
+    retention_raw = access_logs.get('retention_days', DEFAULT_SETTINGS['access_logs']['retention_days'])
+    if retention_raw in ('unlimited', 'none', '', None):
+        retention_days = None
+    else:
+        try:
+            retention_days = int(retention_raw)
+        except (TypeError, ValueError):
+            retention_days = DEFAULT_SETTINGS['access_logs']['retention_days']
+        if retention_days not in VALID_ACCESS_LOG_RETENTION_DAYS:
+            retention_days = DEFAULT_SETTINGS['access_logs']['retention_days']
+
+    query_policy = access_logs.get('search_query_policy', DEFAULT_SETTINGS['access_logs']['search_query_policy'])
+    if query_policy not in VALID_SEARCH_QUERY_POLICIES:
+        query_policy = DEFAULT_SETTINGS['access_logs']['search_query_policy']
+
     return {
         'drive': {
             'enabled': bool(drive.get('enabled', DEFAULT_SETTINGS['drive']['enabled']))
@@ -142,6 +174,10 @@ def merge_settings(raw):
         },
         'storage': {
             'trash_dir': str(storage.get('trash_dir') or DEFAULT_SETTINGS['storage']['trash_dir'])
+        },
+        'access_logs': {
+            'retention_days': retention_days,
+            'search_query_policy': query_policy,
         }
     }
 
@@ -1124,9 +1160,145 @@ def move_recordings_to_trash(relative_paths, delete_drive=False):
     log_delete_recordings(event)
     return event
 
+access_log_store = AccessLogStore(ACCESS_LOG_DB)
+try:
+    access_log_store.initialize()
+except Exception as exc:
+    print(f'access log database initialization failed: {exc}', file=sys.stderr)
+
+_last_access_log_cleanup_date = None
+ACCESS_LOG_EXCLUDED_PATHS = {
+    '/api/health',
+    '/favicon.ico',
+    '/admin/access-logs',
+    '/admin/access-logs/export.csv',
+}
+
+
+def access_log_admin_required(view):
+    """Protect sensitive log views when admin credentials are configured."""
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        expected_user = os.environ.get('KOERADI_ADMIN_USERNAME')
+        expected_password = os.environ.get('KOERADI_ADMIN_PASSWORD')
+        if not expected_user or not expected_password:
+            return Response(
+                'アクセスログを有効にするには KOERADI_ADMIN_USERNAME と KOERADI_ADMIN_PASSWORD を設定してください。',
+                503,
+            )
+        auth = request.authorization
+        valid = bool(auth and hmac.compare_digest(auth.username or '', expected_user)
+                     and hmac.compare_digest(auth.password or '', expected_password))
+        if not valid:
+            return Response('管理者認証が必要です。', 401, {'WWW-Authenticate': 'Basic realm="KoeRadi Admin"'})
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def csrf_token():
+    token = session.get('_access_log_csrf')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['_access_log_csrf'] = token
+    return token
+
+
+def valid_csrf_token():
+    expected = session.get('_access_log_csrf', '')
+    supplied = request.form.get('csrf_token', '')
+    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+
+
+def classify_access_event():
+    path = request.path
+    if request.endpoint == 'api_search' or path == '/api/search':
+        return 'SEARCH'
+    if request.endpoint in {'api_stream', 'serve_audio', 'api_live_stream'}:
+        return 'PLAY'
+    if request.endpoint == 'api_files':
+        return 'FILE_LIST'
+    if request.endpoint == 'api_file_detail':
+        return 'FILE_DETAIL'
+    if path.startswith('/api/'):
+        return 'API_ACCESS'
+    if path.startswith('/admin') or request.endpoint in {
+        'dashboard', 'settings_page', 'jobs_page', 'files_page', 'recordings_page',
+        'logs_page', 'stations_page', 'manual_recording_page', 'program_guide_page',
+    }:
+        return 'ADMIN_ACCESS'
+    return 'API_ACCESS'
+
+
+@app.before_request
+def begin_access_logging():
+    global _last_access_log_cleanup_date
+    g.access_log_started = time.perf_counter()
+    g.access_log_exception = None
+    g.access_log_details = {}
+    g.skip_access_log = (
+        request.path.startswith('/static/') or
+        request.path in ACCESS_LOG_EXCLUDED_PATHS or
+        request.endpoint in {'access_log_detail', 'delete_access_logs'}
+    )
+    today = datetime.date.today()
+    if _last_access_log_cleanup_date != today:
+        _last_access_log_cleanup_date = today
+        try:
+            access_log_store.cleanup(load_settings()['access_logs']['retention_days'])
+        except Exception as exc:
+            print(f'access log cleanup failed: {exc}', file=sys.stderr)
+
+
+@got_request_exception.connect_via(app)
+def remember_access_log_exception(sender, exception, **extra):
+    g.access_log_exception = exception
+
+
+@app.after_request
+def finish_access_logging(response):
+    if getattr(g, 'skip_access_log', True):
+        return response
+    try:
+        event_type = classify_access_event()
+        if response.status_code >= 400:
+            event_type = 'ERROR'
+        details = getattr(g, 'access_log_details', {}) or {}
+        settings = load_settings()['access_logs']
+        query_value = request.args.get('q', '') if event_type == 'SEARCH' else ''
+        error = getattr(g, 'access_log_exception', None)
+        status_error = response.status if response.status_code >= 400 else None
+        trusted_proxies = os.environ.get('KOERADI_TRUSTED_PROXIES', '').split(',')
+        access_log_store.insert({
+            'timestamp': datetime.datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S.%f'),
+            'event_type': event_type,
+            'http_method': request.method,
+            'path': request.path[:1000],
+            'status_code': response.status_code,
+            'ip_address': client_ip(request.remote_addr, request.headers.get('X-Forwarded-For'), trusted_proxies),
+            'user_agent': request.user_agent.string[:512],
+            'device_name': device_name(request.user_agent.string),
+            'response_time_ms': round((time.perf_counter() - g.access_log_started) * 1000, 2),
+            'query': masked_query(query_value, settings['search_query_policy']),
+            'radio_station': details.get('radio_station'),
+            'program_name': details.get('program_name'),
+            'broadcast_date': details.get('broadcast_date'),
+            'file_path': details.get('file_path'),
+            'file_name': details.get('file_name'),
+            'range_header': request.headers.get('Range', '')[:255] or None,
+            'response_size': response.calculate_content_length(),
+            'error_type': type(error).__name__ if error else ('HTTPError' if status_error else None),
+            'error_message': str(error)[:500] if error else status_error,
+            'details_json': json_details(details.get('extra')),
+        })
+    except Exception as exc:
+        # Observability must never break search, API access, or audio playback.
+        print(f'access log write failed: {exc}', file=sys.stderr)
+    return response
+
+
 @app.context_processor
 def inject_admin_nav():
-    return {'admin_nav': ADMIN_NAV}
+    return {'admin_nav': ADMIN_NAV, 'csrf_token': csrf_token}
 
 @app.route('/')
 def legacy_dashboard():
@@ -1144,6 +1316,10 @@ def dashboard():
     keywords_summary = get_keywords_summary()
     today_matched = get_today_matched_programs()
     recent_recordings = get_recent_recordings()
+    try:
+        access_summary = access_log_store.today_summary()
+    except Exception:
+        access_summary = {'total': 0, 'api': 0, 'searches': 0, 'plays': 0, 'errors': 0, 'last_access': None, 'devices': 0}
 
     return render_template(
         'dashboard.html',
@@ -1155,7 +1331,8 @@ def dashboard():
         trash_stats=trash_stats,
         keywords_summary=keywords_summary,
         today_matched=today_matched,
-        recent_recordings=recent_recordings
+        recent_recordings=recent_recordings,
+        access_summary=access_summary,
     )
 
 @app.route('/admin/live')
@@ -1224,6 +1401,7 @@ def settings_page():
     if request.method == 'POST':
         action = request.form.get('action', '')
         if action == 'save_settings':
+            current_settings = load_settings()
             settings = {
                 'drive': {
                     'enabled': request.form.get('drive_enabled') == 'on'
@@ -1235,10 +1413,21 @@ def settings_page():
                     'hour': request.form.get('scheduler_hour', 3),
                     'minute': request.form.get('scheduler_minute', 0),
                     'lookback_days': request.form.get('scheduler_lookback_days', 7),
-                }
+                },
+                'storage': current_settings['storage'],
+                'access_logs': current_settings['access_logs'],
             }
             save_settings(settings)
             message = 'Settings saved.'
+            message_type = 'success'
+        elif action == 'save_access_log_settings':
+            settings = load_settings()
+            settings['access_logs'] = {
+                'retention_days': request.form.get('access_log_retention_days', '90'),
+                'search_query_policy': request.form.get('search_query_policy', 'full'),
+            }
+            save_settings(settings)
+            message = 'アクセスログ設定を保存しました。'
             message_type = 'success'
         elif action in JOB_COMMANDS:
             success, msg = start_settings_job(action)
@@ -1745,6 +1934,7 @@ def files_page():
 @app.route('/audio/<path:filepath>')
 def serve_audio(filepath):
     """録音音声ファイルの配信 (Path Traversal防止)"""
+    g.access_log_details = {'file_path': f'audio/{filepath}', 'file_name': os.path.basename(filepath)}
     audio_dir = os.path.realpath(os.path.join(DATA_DIR, 'audio'))
     
     # 配信対象の完全パスを作成
@@ -1797,6 +1987,7 @@ def api_live_current_program(station_id):
 def api_live_stream(station_id):
     """radikoライブ音声をブラウザ向けMP3としてプロキシする"""
     station = find_station(station_id)
+    g.access_log_details = {'radio_station': station_id, 'file_path': f'live:{station_id}'}
     if not station or not station.get('enabled', True):
         log_live_stream({'station_id': station_id, 'status': 'failed', 'error': 'station not found or disabled'})
         return jsonify({'ok': False, 'error': 'Station not found'}), 404
@@ -1923,6 +2114,11 @@ def api_file_detail(file_id):
     item = find_recording_by_file_id(file_id)
     if not item:
         return jsonify({'ok': False, 'error': 'File not found'}), 404
+    g.access_log_details = {
+        'radio_station': item.get('station'), 'program_name': item.get('title'),
+        'broadcast_date': item.get('date'), 'file_path': item.get('relative_path'),
+        'file_name': item.get('filename'),
+    }
     return jsonify({'ok': True, 'data': serialize_recording_item(item, detail=True)})
 
 @app.route('/api/stream/<file_id>')
@@ -1930,7 +2126,14 @@ def api_stream(file_id):
     """file_id指定の音声ストリーミングAPI"""
     item = find_recording_by_file_id(file_id)
     if not item:
+        g.access_log_details = {'file_path': f'file_id:{file_id}'}
         return jsonify({'ok': False, 'error': 'File not found'}), 404
+
+    g.access_log_details = {
+        'radio_station': item.get('station'), 'program_name': item.get('title'),
+        'broadcast_date': item.get('date'), 'file_path': item.get('relative_path'),
+        'file_name': item.get('filename'),
+    }
 
     rel, abs_path, error = resolve_audio_relative_path(item.get('relative_path'))
     if error:
@@ -2210,6 +2413,110 @@ def read_log_tail(filename, max_lines=160):
             return ''.join(f.readlines()[-max_lines:])
     except Exception as e:
         return f'ログ読み込みエラー: {e}'
+
+
+def access_log_filters():
+    quick = request.args.get('filter', 'all')
+    event_type = request.args.get('event_type', '').upper()
+    errors_only = request.args.get('errors_only') == '1'
+    if quick == 'search':
+        event_type = 'SEARCH'
+    elif quick == 'play':
+        event_type = 'PLAY'
+    elif quick == 'error':
+        event_type, errors_only = '', True
+    return {
+        'date_from': request.args.get('date_from', ''),
+        'date_to': request.args.get('date_to', ''),
+        'event_type': event_type,
+        'status_code': request.args.get('status_code', ''),
+        'ip_address': request.args.get('ip_address', '').strip(),
+        'keyword': request.args.get('keyword', '').strip(),
+        'errors_only': errors_only,
+        'filter': quick,
+    }
+
+
+@app.route('/admin/access-logs')
+@access_log_admin_required
+def access_logs_page():
+    """Searchable, newest-first access log list."""
+    filters = access_log_filters()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    try:
+        per_page = int(request.args.get('per_page', 50))
+    except ValueError:
+        per_page = 50
+    if per_page not in {25, 50, 100}:
+        per_page = 50
+    rows, total = access_log_store.list(filters, page, per_page)
+    pages = max(1, math.ceil(total / per_page))
+    if page > pages:
+        page = pages
+        rows, total = access_log_store.list(filters, page, per_page)
+    return render_template(
+        'access_logs.html', active_nav='access_logs', logs=rows, filters=filters,
+        page=page, pages=pages, per_page=per_page, total=total,
+        event_types=['SEARCH', 'PLAY', 'FILE_LIST', 'FILE_DETAIL', 'API_ACCESS', 'ADMIN_ACCESS', 'ERROR'],
+    )
+
+
+@app.route('/admin/access-logs/<int:log_id>')
+@access_log_admin_required
+def access_log_detail(log_id):
+    entry = access_log_store.get(log_id)
+    if not entry:
+        abort(404)
+    return render_template('access_log_detail.html', active_nav='access_logs', log=entry)
+
+
+def csv_safe(value):
+    text = '' if value is None else str(value)
+    return "'" + text if text.startswith(('=', '+', '-', '@')) else text
+
+
+@app.route('/admin/access-logs/export.csv')
+@access_log_admin_required
+def export_access_logs_csv():
+    output = io.StringIO(newline='')
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(['日時', '種別', 'メソッド', 'URL', 'ステータスコード', 'IPアドレス', '端末情報', '処理時間(ms)', '対象ファイル', 'エラー'])
+    for row in access_log_store.iter_all(access_log_filters()):
+        writer.writerow([csv_safe(value) for value in (
+            row['timestamp'], row['event_type'], row['http_method'], row['path'], row['status_code'],
+            row['ip_address'], row['device_name'] or row['user_agent'], row['response_time_ms'],
+            row['file_name'] or row['file_path'], row['error_message'],
+        )])
+    return Response(
+        output.getvalue(), mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename=koeradi-access-logs.csv', 'Cache-Control': 'no-store'},
+    )
+
+
+@app.route('/admin/access-logs/delete', methods=['GET', 'POST'])
+@access_log_admin_required
+def delete_access_logs():
+    if request.method == 'GET':
+        return render_template('access_log_delete.html', active_nav='access_logs')
+    if not valid_csrf_token():
+        abort(400, description='CSRF token is invalid')
+    mode = request.form.get('mode')
+    if mode == 'all':
+        count = access_log_store.delete_all()
+    elif mode == 'before':
+        before_date = request.form.get('before_date', '')
+        try:
+            datetime.datetime.strptime(before_date, '%Y-%m-%d')
+        except ValueError:
+            abort(400, description='削除基準日が不正です。')
+        count = access_log_store.delete_before(before_date + ' 00:00:00')
+    else:
+        abort(400, description='削除方法が不正です。')
+    return redirect(url_for('access_logs_page', deleted=count))
 
 @app.route('/admin/logs')
 def logs_page():

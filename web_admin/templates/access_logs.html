@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}KoeRadi Archive Server - アクセスログ{% endblock %}
+{% block page_title %}アクセスログ{% endblock %}
+{% block page_description %}Androidアプリとブラウザからの利用状況、応答時間、エラーを確認します{% endblock %}
+{% block page_actions %}
+<button type="button" class="btn btn-outline" onclick="location.reload()" aria-label="アクセスログを手動更新">更新</button>
+<label class="switch-label"><input id="autoRefresh" type="checkbox"> <span>30秒ごとに自動更新</span></label>
+<a class="btn btn-outline" href="{{ url_for('export_access_logs_csv', **request.args) }}">CSV出力</a>
+<a class="btn btn-danger" href="{{ url_for('delete_access_logs') }}">ログを削除</a>
+{% endblock %}
+
+{% block content %}
+{% if request.args.get('deleted') %}<div class="alert alert-success" role="status">{{ request.args.get('deleted') }}件を削除しました。</div>{% endif %}
+<nav class="filter-buttons" aria-label="簡易フィルター">
+  {% for value, label in [('all','すべて'),('search','検索'),('play','再生'),('error','エラー')] %}
+  <a class="btn {% if filters.filter == value %}btn-primary{% else %}btn-outline{% endif %}" href="{{ url_for('access_logs_page', filter=value, per_page=per_page) }}" {% if filters.filter == value %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<div class="card">
+  <form method="get" class="access-log-filters" aria-label="アクセスログ絞り込み">
+    <div class="form-group"><label for="date_from">開始日</label><input class="form-control" id="date_from" name="date_from" type="date" value="{{ filters.date_from }}"></div>
+    <div class="form-group"><label for="date_to">終了日</label><input class="form-control" id="date_to" name="date_to" type="date" value="{{ filters.date_to }}"></div>
+    <div class="form-group"><label for="event_type">アクセス種別</label><select class="form-control" id="event_type" name="event_type"><option value="">すべて</option>{% for type in event_types %}<option value="{{ type }}" {% if filters.event_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}</select></div>
+    <div class="form-group"><label for="status_code">ステータスコード</label><input class="form-control" id="status_code" name="status_code" type="number" min="100" max="599" value="{{ filters.status_code }}"></div>
+    <div class="form-group"><label for="ip_address">IPアドレス</label><input class="form-control" id="ip_address" name="ip_address" type="text" maxlength="64" value="{{ filters.ip_address }}"></div>
+    <div class="form-group"><label for="keyword">キーワード</label><input class="form-control" id="keyword" name="keyword" type="text" maxlength="200" value="{{ filters.keyword }}"></div>
+    <div class="form-group"><label for="per_page">1ページの件数</label><select class="form-control" id="per_page" name="per_page">{% for size in [25,50,100] %}<option value="{{ size }}" {% if per_page == size %}selected{% endif %}>{{ size }}件</option>{% endfor %}</select></div>
+    <label class="switch-label"><input type="checkbox" name="errors_only" value="1" {% if filters.errors_only %}checked{% endif %}> <span>エラーのみ</span></label>
+    <div class="filter-actions"><button class="btn btn-primary" type="submit">絞り込む</button><a class="btn btn-outline" href="{{ url_for('access_logs_page') }}">条件をクリア</a></div>
+  </form>
+</div>
+
+<div class="card">
+  <p aria-live="polite">全{{ total }}件中、このページに{{ logs|length }}件を表示（新しい順）</p>
+  {% if logs %}<div class="table-scroll"><table class="data-table access-log-table">
+    <caption class="sr-only">アクセスログ一覧</caption>
+    <thead><tr><th scope="col">日時</th><th scope="col">種別</th><th scope="col">メソッド・URL</th><th scope="col">結果</th><th scope="col">IP・端末</th><th scope="col">処理時間</th><th scope="col">補足・エラー</th></tr></thead>
+    <tbody>{% for log in logs %}<tr class="{% if log.status_code >= 400 %}log-error-row{% endif %}">
+      <td><a href="{{ url_for('access_log_detail', log_id=log.id) }}"><time datetime="{{ log.timestamp }}">{{ log.timestamp[:19] }}</time></a></td>
+      <td><span class="badge {% if log.status_code >= 400 %}badge-danger{% elif log.event_type == 'PLAY' %}badge-info{% else %}badge-secondary{% endif %}">{{ log.event_type }}</span></td>
+      <td><strong>{{ log.http_method }}</strong> <code>{{ log.path }}</code></td>
+      <td><span aria-label="HTTPステータス {{ log.status_code }}">{{ log.status_code }}</span></td>
+      <td>{{ log.ip_address or '-' }}<br><small>{{ log.device_name or '不明' }}</small></td>
+      <td>{{ '%.2f'|format(log.response_time_ms or 0) }}ms</td>
+      <td>{% if log.query %}検索: {{ log.query }}{% elif log.file_name %}{{ log.file_name }}{% else %}-{% endif %}{% if log.error_message %}<div class="error-text"><span class="sr-only">エラー: </span>{{ log.error_message }}</div>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="empty-msg">条件に一致するアクセスログはありません。</p>{% endif %}
+
+  {% if pages > 1 %}<nav class="pagination" aria-label="ページ移動">
+    {% if page > 1 %}<a class="btn btn-outline" href="{{ url_for('access_logs_page', **dict(request.args, page=page-1)) }}">前へ</a>{% endif %}
+    <span>{{ page }} / {{ pages }}ページ</span>
+    {% if page < pages %}<a class="btn btn-outline" href="{{ url_for('access_logs_page', **dict(request.args, page=page+1)) }}">次へ</a>{% endif %}
+  </nav>{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}<script>
+const checkbox = document.getElementById('autoRefresh');
+let refreshTimer = null;
+checkbox.addEventListener('change', () => {
+  clearInterval(refreshTimer);
+  refreshTimer = checkbox.checked ? setInterval(() => location.reload(), 30000) : null;
+});
+</script>{% endblock %}

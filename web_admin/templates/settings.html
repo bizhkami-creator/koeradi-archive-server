@@ -149,6 +149,30 @@
 
 <div class="card">
     <h2 class="card-title">ログ設定 / 運用テスト</h2>
+    <form action="{{ url_for('settings_page') }}" method="POST" class="settings-form">
+        <input type="hidden" name="action" value="save_access_log_settings">
+        <div class="settings-grid">
+            <div class="form-group">
+                <label for="access_log_retention_days">アクセスログ保持日数</label>
+                <select id="access_log_retention_days" name="access_log_retention_days" class="form-control">
+                    {% for value, label in [('30','30日'),('90','90日'),('180','180日'),('unlimited','無期限')] %}
+                    <option value="{{ value }}" {% if (settings.access_logs.retention_days|string) == value or (value == 'unlimited' and settings.access_logs.retention_days is none) %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="search_query_policy">検索キーワードの保存</label>
+                <select id="search_query_policy" name="search_query_policy" class="form-control">
+                    <option value="full" {% if settings.access_logs.search_query_policy == 'full' %}selected{% endif %}>保存する</option>
+                    <option value="masked" {% if settings.access_logs.search_query_policy == 'masked' %}selected{% endif %}>一部を伏字にする</option>
+                    <option value="none" {% if settings.access_logs.search_query_policy == 'none' %}selected{% endif %}>保存しない</option>
+                </select>
+                <div class="settings-help">パスワード、認証ヘッダー、Cookie、本文は設定に関係なく保存しません。</div>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">アクセスログ設定を保存</button>
+    </form>
+    <hr>
     <div class="test-actions">
         <form action="{{ url_for('settings_page') }}" method="POST">
             <input type="hidden" name="action" value="dry_run_yesterday">

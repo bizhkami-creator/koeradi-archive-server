@@ -281,9 +281,29 @@ http://<RaspberryPiのIPアドレス>:8080
   - 削除操作は `logs/delete_recordings.log` に、日時、件数、対象ファイル、Google Drive削除有無、成功/失敗をJSON Lines形式で記録します。
   - Dashboard にはゴミ箱件数とゴミ箱容量を表示します。
 
+### アクセスログ管理
+
+`/admin/access-logs` は検索語、IPアドレス、User-Agentを含む可能性があるため、閲覧・CSV・削除に管理者認証を必須としています。サービスの環境変数に十分長い値を設定してから利用してください。
+
+`koeradi-web.service` が読み込む `/etc/koeradi-web.env` に、次の形式（`Environment=` は付けません）で設定します。
+
+```bash
+KOERADI_ADMIN_USERNAME=admin
+KOERADI_ADMIN_PASSWORD=十分に長いパスワード
+KOERADI_SECRET_KEY=十分に長いランダム文字列
+```
+
+リバースプロキシ経由の実IPを使う場合だけ、直接接続元のIPまたはCIDRを `KOERADI_TRUSTED_PROXIES` にカンマ区切りで指定します。未設定時は `X-Forwarded-For` を無視します。
+
+```bash
+KOERADI_TRUSTED_PROXIES=127.0.0.1,192.168.1.10/32
+```
+
+保存先は `logs/access_logs.sqlite3` です。初期保持期間は90日で、検索キーワードの保存方針とともに設定画面から変更できます。
+
 > [!CAUTION]
 > **外部公開に関する注意事項**
-> 本Web管理画面は家庭内LAN環境での利用を前提としており、ログイン認証機能を備えていません。
+> 本Web管理画面全体は家庭内LAN環境での利用を前提としており、アクセスログ画面以外にはログイン認証機能を備えていません。
 > **ポートフォワーディング等によるインターネットへの外部公開は絶対に行わないでください。**
 
 ## 今後の予定

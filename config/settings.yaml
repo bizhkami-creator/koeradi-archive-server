@@ -9,3 +9,6 @@ scheduler:
   lookback_days: 7
 storage:
   trash_dir: data/trash
+access_logs:
+  retention_days: 90
+  search_query_policy: full

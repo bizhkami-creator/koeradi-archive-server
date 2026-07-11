@@ -81,6 +81,19 @@
     </div>
 </section>
 
+<section class="section" aria-labelledby="today-access-heading">
+    <div class="card">
+        <h2 id="today-access-heading" class="card-title">本日のアクセス</h2>
+        <div class="grid-4">
+            <div class="stat-card"><div class="stat-title">APIアクセス</div><div class="stat-main">{{ access_summary.api or 0 }}<span class="stat-unit">件</span></div></div>
+            <div class="stat-card"><div class="stat-title">検索</div><div class="stat-main">{{ access_summary.searches or 0 }}<span class="stat-unit">件</span></div></div>
+            <div class="stat-card"><div class="stat-title">再生開始</div><div class="stat-main">{{ access_summary.plays or 0 }}<span class="stat-unit">件</span></div><div class="stat-sub">同一IP・ファイルの60秒以内を重複除外</div></div>
+            <div class="stat-card {% if access_summary.errors %}stat-card-error{% endif %}"><div class="stat-title">エラー</div><div class="stat-main">{{ access_summary.errors or 0 }}<span class="stat-unit">件</span></div>{% if access_summary.errors %}<div class="error-text">注意: エラーがあります</div>{% endif %}</div>
+        </div>
+        <div class="settings-summary" style="margin-top: 16px;"><span>最終アクセス: <strong>{{ access_summary.last_access[:19] if access_summary.last_access else '-' }}</strong></span><span>利用端末: <strong>{{ access_summary.devices or 0 }}台</strong></span><a href="{{ url_for('access_logs_page') }}">アクセスログを確認</a></div>
+    </div>
+</section>
+
 <section class="section">
     <div class="card">
         <h2 class="card-title">次回録音予定</h2>
