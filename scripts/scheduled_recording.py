@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import fcntl
 from pathlib import Path
 
 try:
@@ -23,6 +24,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.yaml"
 LOG_FILE = PROJECT_ROOT / "logs" / "scheduler.log"
+LOCK_FILE = PROJECT_ROOT / "logs" / "scheduler.lock"
 MOUNT_PATH = Path("/mnt/koeradi")
 
 DEFAULT_SETTINGS = {
@@ -36,6 +38,13 @@ DEFAULT_SETTINGS = {
         "hour": 3,
         "minute": 0,
         "lookback_days": 7,
+    },
+    "recording": {
+        "timeout_margin_minutes": 10,
+        "minimum_timeout_minutes": 15,
+        "maximum_timeout_minutes": 240,
+        "terminate_grace_seconds": 30,
+        "http_io_timeout_seconds": 30,
     },
 }
 
@@ -93,6 +102,9 @@ def normalize_settings(raw):
     if lookback_days not in VALID_LOOKBACK_DAYS:
         lookback_days = DEFAULT_SETTINGS["scheduler"]["lookback_days"]
 
+    recording = raw.get("recording") or {}
+    normalized_recording = DEFAULT_SETTINGS["recording"].copy()
+    normalized_recording.update({key: recording.get(key, default) for key, default in normalized_recording.items()})
     return {
         "drive": {
             "enabled": bool(drive.get("enabled", DEFAULT_SETTINGS["drive"]["enabled"])),
@@ -105,6 +117,7 @@ def normalize_settings(raw):
             "minute": min(max(minute, 0), 59),
             "lookback_days": lookback_days,
         },
+        "recording": normalized_recording,
     }
 
 
@@ -158,6 +171,14 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="録音・同期を行わず実行内容だけ確認します")
     parser.add_argument("--force", action="store_true", help="scheduler.enabled=falseでも手動テストとして実行します")
     args = parser.parse_args()
+
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = open(LOCK_FILE, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log_line("[INFO] duplicate_scheduler_skipped: 別のScheduler実行がロックを保持しています。")
+        return 0
 
     log_line("==================================================")
     log_line("=== scheduled_recording.py 実行開始 ===")

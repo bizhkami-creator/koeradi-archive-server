@@ -729,6 +729,7 @@ for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
         -nostdin \
         -loglevel error \
         -fflags +discardcorrupt \
+        -rw_timeout "${KOERADI_FFMPEG_RW_TIMEOUT_US:-30000000}" \
         -headers "${ffmpeg_header}" \
         -http_seekable 0 \
         -seekable 0 \

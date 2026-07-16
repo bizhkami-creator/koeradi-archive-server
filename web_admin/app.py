@@ -48,7 +48,7 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 ADMIN_NAV = [
     {'key': 'dashboard', 'label': 'ダッシュボード', 'endpoint': 'dashboard'},
     {'key': 'live', 'label': 'ライブ再生', 'endpoint': 'live_page'},
-    {'key': 'jobs', 'label': '録音管理', 'endpoint': 'jobs_page'},
+    {'key': 'jobs', 'label': 'キーワード録音ルール', 'endpoint': 'jobs_page'},
     {'key': 'files', 'label': 'ファイル管理', 'endpoint': 'files_page'},
     {'key': 'access_logs', 'label': 'アクセスログ', 'endpoint': 'access_logs_page'},
     {'key': 'settings', 'label': '設定', 'endpoint': 'settings_page'},
@@ -66,6 +66,13 @@ DEFAULT_SETTINGS = {
         'hour': 3,
         'minute': 0,
         'lookback_days': 7
+    },
+    'recording': {
+        'timeout_margin_minutes': 10,
+        'minimum_timeout_minutes': 15,
+        'maximum_timeout_minutes': 240,
+        'terminate_grace_seconds': 30,
+        'http_io_timeout_seconds': 30,
     },
     'storage': {
         'trash_dir': 'data/trash'
@@ -117,6 +124,7 @@ def merge_settings(raw):
     scheduler = raw.get('scheduler') or {}
     storage = raw.get('storage') or {}
     access_logs = raw.get('access_logs') or {}
+    recording = raw.get('recording') or {}
 
     mode = scheduler.get('mode', DEFAULT_SETTINGS['scheduler']['mode'])
     if mode not in VALID_SCHEDULER_MODES:
@@ -172,6 +180,10 @@ def merge_settings(raw):
             'minute': minute,
             'lookback_days': lookback_days,
         },
+        'recording': {
+            key: recording.get(key, value)
+            for key, value in DEFAULT_SETTINGS['recording'].items()
+        },
         'storage': {
             'trash_dir': str(storage.get('trash_dir') or DEFAULT_SETTINGS['storage']['trash_dir'])
         },
@@ -215,6 +227,18 @@ def save_rules(rules):
     data = {'rules': rules}
     with open(RULES_FILE, 'w', encoding='utf-8') as f:
         yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+
+def log_scheduler_info(event, **details):
+    """Scheduler/録音ルールの調査用INFOイベントをscheduler.logへ記録する。"""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    payload = {
+        'timestamp': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+        'level': 'INFO',
+        'event': event,
+        **details,
+    }
+    with open(os.path.join(LOGS_DIR, 'scheduler.log'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
 def load_stations():
     """放送局設定ファイル(stations.yaml)を読み込む"""
@@ -631,8 +655,12 @@ def get_scheduler_log_tail(max_lines=50):
     if not os.path.exists(log_path):
         return 'logs/scheduler.log はまだ存在しません。'
     try:
-        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-            return ''.join(f.readlines()[-max_lines:])
+        with open(log_path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 131072), os.SEEK_SET)
+            chunk = f.read().decode('utf-8', errors='ignore')
+            return ''.join(chunk.splitlines(keepends=True)[-max_lines:])
     except Exception as e:
         return f'ログ読み込みエラー: {e}'
 
@@ -699,7 +727,7 @@ def start_settings_job(job_key):
     ] + job['command']
 
     try:
-        subprocess.Popen(cmd, cwd=BASE_DIR)
+        subprocess.Popen(cmd, cwd=BASE_DIR, start_new_session=True)
         append_settings_job_event(job['label'], command_text, drive_enabled, 'running', f"Job started: {job['label']}", extra=scheduler_extra)
         return True, f"Job started: {job['label']}"
     except Exception as e:
@@ -1416,6 +1444,7 @@ def settings_page():
                 },
                 'storage': current_settings['storage'],
                 'access_logs': current_settings['access_logs'],
+                'recording': current_settings['recording'],
             }
             save_settings(settings)
             message = 'Settings saved.'
@@ -1499,6 +1528,7 @@ def add_rule():
         rules = load_rules()
         rules.append({'name': name, 'keyword': keyword, 'enabled': enabled})
         save_rules(rules)
+        log_scheduler_info('job_registered', job_id=len(rules) - 1, name=name, keyword=keyword, enabled=enabled)
     return redirect(url_for('jobs_page'))
 
 @app.route('/rules/toggle/<int:index>', methods=['POST'])
@@ -1509,6 +1539,7 @@ def toggle_rule(index):
     if 0 <= index < len(rules):
         rules[index]['enabled'] = not rules[index].get('enabled', False)
         save_rules(rules)
+        log_scheduler_info('job_updated', job_id=index, name=rules[index].get('name'), enabled=rules[index]['enabled'])
     return redirect(url_for('jobs_page'))
 
 @app.route('/rules/delete/<int:index>', methods=['POST'])
@@ -1517,8 +1548,9 @@ def delete_rule(index):
     """ルールの削除"""
     rules = load_rules()
     if 0 <= index < len(rules):
-        rules.pop(index)
+        removed = rules.pop(index)
         save_rules(rules)
+        log_scheduler_info('job_deleted', job_id=index, name=removed.get('name'), keyword=removed.get('keyword'))
     return redirect(url_for('jobs_page'))
 
 @app.route('/run-dry-run', methods=['POST'])
@@ -2253,7 +2285,7 @@ def manual_recording_page():
                 runner_script = os.path.join(BASE_DIR, 'scripts', 'run_manual_recording.py')
                 cmd = [sys.executable, runner_script, '--date', selected_date, '--stations'] + selected_stations
                 try:
-                    subprocess.Popen(cmd, cwd=BASE_DIR)
+                    subprocess.Popen(cmd, cwd=BASE_DIR, start_new_session=True)
                     message = "Recording job started. Please check logs."
                     message_type = "success"
                 except Exception as e:
@@ -2397,7 +2429,7 @@ def api_record_single():
     cmd = [sys.executable, script_path, '--station', station, '--date', date_str, '--start', start, '--duration', duration, '--title', title, '--personality', personality]
     
     try:
-        subprocess.Popen(cmd, cwd=BASE_DIR)
+        subprocess.Popen(cmd, cwd=BASE_DIR, start_new_session=True)
         return jsonify({'success': True, 'message': f"番組「{title}」の録音処理をバックグラウンドで開始しました。"})
     except Exception as e:
         return jsonify({'success': False, 'message': f"録音処理の起動に失敗しました: {e}"})

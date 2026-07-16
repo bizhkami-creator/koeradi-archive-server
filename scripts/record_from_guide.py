@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 import yaml
+from recording_runtime import calculate_timeout_seconds, load_recording_settings, run_process_group
 
 # プロジェクトのルートディレクトリおよび関連パスの取得
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -104,6 +105,7 @@ def main():
 
     station_id = args.station.strip().upper()
     date_str = args.date.strip()
+    recording_settings = load_recording_settings()
 
     # 日付フォーマットの検証
     try:
@@ -134,7 +136,7 @@ def main():
             log_message("filter_programs.py を呼び出して抽出処理を実行します...")
             cmd_filter = [sys.executable, str(FILTER_SCRIPT), "--station", station_id, "--date", date_str]
             try:
-                subprocess.run(cmd_filter, check=True)
+                subprocess.run(cmd_filter, check=True, timeout=180)
                 log_message("抽出処理の自動実行に成功しました。")
             except subprocess.CalledProcessError as e:
                 log_message(f"[ERROR] 抽出処理の自動実行に失敗しました (Exit Code: {e.returncode})")
@@ -156,7 +158,7 @@ def main():
             log_message("fetch_program_guide.py を呼び出して番組表を取得します...")
             cmd_fetch = [sys.executable, str(FETCH_SCRIPT), "--station", station_id, "--date", date_str]
             try:
-                subprocess.run(cmd_fetch, check=True)
+                subprocess.run(cmd_fetch, check=True, timeout=180)
                 log_message("番組表の自動取得に成功しました。")
             except subprocess.CalledProcessError as e:
                 log_message(f"[ERROR] 番組表の自動取得に失敗しました (Exit Code: {e.returncode})")
@@ -222,6 +224,9 @@ def main():
     else:
         success_count = 0
         fail_count = 0
+        timeout_count = 0
+        auth_fail_count = 0
+        unexpected_count = 0
         skip_count = 0
 
         for idx, prog in enumerate(programs, 1):
@@ -233,6 +238,7 @@ def main():
 
             start_iso = prog.get("start_time")
             duration = str(prog.get("duration_minutes", 0))
+            timeout_seconds = calculate_timeout_seconds(duration, recording_settings)
             start_datetime = parse_start_datetime(start_iso)
 
             rel_output_path = f"data/audio/{station_name}/{year}/{month}/{date_str}_{prog_filename_part}.m4a"
@@ -250,24 +256,36 @@ def main():
                 log_message(f"SKIP: not_finished_skip (終了予定: {end_text})")
                 skip_count += 1
             else:
-                log_message(f"録音開始: {station_id} - {raw_title} (日時: {start_datetime}, 時間: {duration}分)")
+                log_message(f"録音開始: station={station_id} program={raw_title} broadcast={start_datetime} duration_minutes={duration} timeout_seconds={timeout_seconds} output={rel_output_path}")
                 cmd = ["bash", str(RECORD_SCRIPT), station_id, start_datetime, duration, prog_filename_part]
                 try:
-                    subprocess.run(cmd, check=True)
-                    log_message(f"録音成功: {station_id} - {raw_title}")
-                    success_count += 1
-                except subprocess.CalledProcessError as e:
-                    log_message(f"[ERROR] 録音失敗 (Exit Code: {e.returncode}): {station_id} - {raw_title}")
-                    fail_count += 1
+                    outer_timeout = timeout_seconds + recording_settings["terminate_grace_seconds"] + 60
+                    result = run_process_group(cmd, outer_timeout, recording_settings["terminate_grace_seconds"])
+                    returncode, _, _, python_timeout, kill_sent, elapsed, pid = result
+                    if returncode == 0:
+                        log_message(f"録音成功: station={station_id} program={raw_title} pid={pid} elapsed_seconds={elapsed:.1f} exit_code=0")
+                        success_count += 1
+                    elif returncode == 124 or python_timeout:
+                        log_message(f"[ERROR] classification=RECORDING_TIMEOUT station={station_id} program={raw_title} pid={pid} elapsed_seconds={elapsed:.1f} timeout_seconds={outer_timeout} sigterm_sent=true sigkill_sent={str(kill_sent).lower()}")
+                        timeout_count += 1
+                    elif returncode == 65:
+                        log_message(f"[ERROR] classification=AUTH_FAILURE station={station_id} program={raw_title} pid={pid} elapsed_seconds={elapsed:.1f} exit_code={returncode} retry=false")
+                        auth_fail_count += 1
+                    else:
+                        log_message(f"[ERROR] classification=RECORDING_FAILED station={station_id} program={raw_title} pid={pid} elapsed_seconds={elapsed:.1f} exit_code={returncode} retry=false")
+                        fail_count += 1
                 except Exception as e:
-                    log_message(f"[ERROR] 予期せぬエラーで録音失敗: {e}")
-                    fail_count += 1
+                    log_message(f"[ERROR] classification=UNEXPECTED_EXCEPTION station={station_id} program={raw_title} error={type(e).__name__}: {e}")
+                    unexpected_count += 1
 
         # 最終サマリーの出力
         log_message("=== 最終サマリー ===")
         log_message(f"対象番組数: {target_count}")
         log_message(f"成功: {success_count}")
         log_message(f"失敗: {fail_count}")
+        log_message(f"認証失敗: {auth_fail_count}")
+        log_message(f"タイムアウト: {timeout_count}")
+        log_message(f"想定外例外: {unexpected_count}")
         log_message(f"スキップ (既存): {skip_count}")
 
     log_message("=== record_from_guide.py 実行完了 ===\n")

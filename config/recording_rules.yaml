@@ -1,7 +1,4 @@
 rules:
-- name: オードリー
-  keyword: オードリー
-  enabled: true
 - name: 佐久間
   keyword: 佐久間
   enabled: true
@@ -35,6 +32,9 @@ rules:
 - name: 日経電子版NEWS
   keyword: 日経電子版NEWS
   enabled: true
-- name: KOO
-  keyword: KOO
+- name: 桑田佳祐
+  keyword: 桑田佳祐
+  enabled: true
+- name: MUSIC10
+  keyword: MUSIC10
   enabled: true

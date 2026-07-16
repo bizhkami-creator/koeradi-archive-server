@@ -7,6 +7,12 @@ scheduler:
   hour: 0
   minute: 0
   lookback_days: 7
+recording:
+  timeout_margin_minutes: 10
+  minimum_timeout_minutes: 15
+  maximum_timeout_minutes: 240
+  terminate_grace_seconds: 30
+  http_io_timeout_seconds: 30
 storage:
   trash_dir: data/trash
 access_logs:

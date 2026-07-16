@@ -67,8 +67,11 @@ print(mapping.get('$STATION_ID', '$STATION_ID'))
 OUTPUT_DIR="$PROJECT_ROOT/data/audio/$STATION_NAME/$YEAR/$MONTH"
 FILE_NAME="${DATE_STR}_${PROGRAM_NAME}.m4a"
 OUTPUT_FILE="$OUTPUT_DIR/$FILE_NAME"
+FAILED_DIR="$PROJECT_ROOT/data/failed_recordings/$STATION_NAME/$YEAR/$MONTH"
+PART_FILE="$FAILED_DIR/${FILE_NAME%.m4a}.part.m4a"
 
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$FAILED_DIR"
 
 log "=== 録音テスト開始 ==="
 log "放送局: $STATION_NAME ($STATION_ID)"
@@ -77,24 +80,63 @@ log "録音時間: ${DURATION_MINUTES}分"
 log "番組名: $PROGRAM_NAME"
 log "保存先: $OUTPUT_FILE"
 
-VENDOR_SCRIPT="$SCRIPT_DIR/vendor/rec_radiko_ts.sh"
+read -r TIMEOUT_SECONDS TERMINATE_GRACE_SECONDS HTTP_IO_TIMEOUT_SECONDS < <(
+    python3 - "$PROJECT_ROOT" "$DURATION_MINUTES" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from recording_runtime import calculate_timeout_seconds, load_recording_settings
+settings = load_recording_settings()
+print(calculate_timeout_seconds(sys.argv[2], settings), settings["terminate_grace_seconds"], settings["http_io_timeout_seconds"])
+PY
+)
+
+VENDOR_SCRIPT="${KOERADI_VENDOR_SCRIPT:-$SCRIPT_DIR/vendor/rec_radiko_ts.sh}"
 
 if [ ! -f "$VENDOR_SCRIPT" ]; then
     log_error "録音スクリプトが見つかりません: $VENDOR_SCRIPT"
     exit 1
 fi
 
-# rec_radiko_ts.sh の実行
+# rec_radiko_ts.sh の実行。正式名は成功時のみ原子的に確定する。
+START_EPOCH=$(date +%s)
+RUN_OUTPUT_LOG=$(mktemp)
+trap 'rm -f "$RUN_OUTPUT_LOG"' EXIT
+TMP_BEFORE=$(find /tmp -maxdepth 1 -type d -name 'recradikots_*' -printf '%p\n' 2>/dev/null | sort || true)
+log "[INFO] 録音開始: station=$STATION_NAME station_id=$STATION_ID program=$PROGRAM_NAME broadcast=$START_DATETIME duration_minutes=$DURATION_MINUTES timeout_seconds=$TIMEOUT_SECONDS output=$OUTPUT_FILE process=timeout"
 set +e
-"$VENDOR_SCRIPT" -s "$STATION_ID" -f "$START_DATETIME" -d "$DURATION_MINUTES" -o "$OUTPUT_FILE" 2>&1 | tee -a "$LOG_FILE"
+KOERADI_FFMPEG_RW_TIMEOUT_US=$((HTTP_IO_TIMEOUT_SECONDS * 1000000)) \
+timeout --verbose --signal=TERM --kill-after="${TERMINATE_GRACE_SECONDS}s" "${TIMEOUT_SECONDS}s" \
+    "$VENDOR_SCRIPT" -s "$STATION_ID" -f "$START_DATETIME" -d "$DURATION_MINUTES" -o "$PART_FILE" 2>&1 | tee "$RUN_OUTPUT_LOG" -a "$LOG_FILE"
 EXIT_CODE="${PIPESTATUS[0]}"
 set -e
+ELAPSED_SECONDS=$(( $(date +%s) - START_EPOCH ))
+PART_SIZE=$(stat -c '%s' "$PART_FILE" 2>/dev/null || echo 0)
+TMP_AFTER=$(find /tmp -maxdepth 1 -type d -name 'recradikots_*' -printf '%p\n' 2>/dev/null | sort || true)
+NEW_TMP=$(comm -13 <(printf '%s\n' "$TMP_BEFORE") <(printf '%s\n' "$TMP_AFTER") | paste -sd, -)
 
 if [ "$EXIT_CODE" -eq 0 ]; then
+    mv -f "$PART_FILE" "$OUTPUT_FILE"
+    OUTPUT_SIZE=$(stat -c '%s' "$OUTPUT_FILE" 2>/dev/null || echo 0)
+    log "[INFO] 録音終了: elapsed_seconds=$ELAPSED_SECONDS exit_code=0 size_bytes=$OUTPUT_SIZE output=$OUTPUT_FILE"
     log "=== 録音テスト成功 ==="
     log "ファイルが正常に保存されました: $OUTPUT_FILE"
+elif [ "$EXIT_CODE" -eq 124 ] || [ "$EXIT_CODE" -eq 137 ]; then
+    SIGKILL_SENT=$(grep -q "signal KILL" "$RUN_OUTPUT_LOG" && echo true || echo false)
+    log_error "classification=RECORDING_TIMEOUT station=$STATION_NAME program=$PROGRAM_NAME broadcast=$START_DATETIME elapsed_seconds=$ELAPSED_SECONDS timeout_seconds=$TIMEOUT_SECONDS sigterm_sent=true sigkill_sent=$SIGKILL_SENT partial_file=$PART_FILE partial_size_bytes=$PART_SIZE temp_dirs=${NEW_TMP:-none}"
+    exit 124
 else
+    CLASSIFICATION="RECORDING_FAILED"
+    FINAL_EXIT_CODE="$EXIT_CODE"
+    if grep -qi 'auth failed' "$RUN_OUTPUT_LOG"; then
+        CLASSIFICATION="AUTH_FAILURE"
+        FINAL_EXIT_CODE=65
+    elif grep -qi 'Document is empty' "$RUN_OUTPUT_LOG"; then
+        CLASSIFICATION="EMPTY_RESPONSE"
+        FINAL_EXIT_CODE=66
+    fi
+    STDERR_TAIL=$(tail -n 5 "$RUN_OUTPUT_LOG" | tr '\n' ' ' | sed -E 's/(AuthToken: )[[:graph:]]+/\1[REDACTED]/gi')
+    log_error "classification=$CLASSIFICATION station=$STATION_NAME program=$PROGRAM_NAME broadcast=$START_DATETIME elapsed_seconds=$ELAPSED_SECONDS exit_code=$FINAL_EXIT_CODE partial_file=$PART_FILE partial_size_bytes=$PART_SIZE temp_dirs=${NEW_TMP:-none} retry=false stderr_tail=$STDERR_TAIL"
     log_error "=== 録音テスト失敗 (Exit Code: $EXIT_CODE) ==="
     log_error "radikoの仕様変更、配信時間外、またはエリア外制限の可能性があります。"
-    exit "$EXIT_CODE"
+    exit "$FINAL_EXIT_CODE"
 fi

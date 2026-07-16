@@ -91,23 +91,9 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group">
-                <label for="scheduler_interval">実行間隔</label>
-                <select id="scheduler_interval" name="scheduler_interval" class="form-control">
-                    <option value="hourly" {% if settings.scheduler.interval == 'hourly' %}selected{% endif %}>1時間ごと</option>
-                    <option value="every_6_hours" {% if settings.scheduler.interval == 'every_6_hours' %}selected{% endif %}>6時間ごと</option>
-                    <option value="daily" {% if settings.scheduler.interval == 'daily' %}selected{% endif %}>毎日</option>
-                    <option value="weekly" {% if settings.scheduler.interval == 'weekly' %}selected{% endif %}>毎週</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="scheduler_hour">hour</label>
-                <input type="number" id="scheduler_hour" name="scheduler_hour" min="0" max="23" value="{{ settings.scheduler.hour }}" class="form-control">
-            </div>
-            <div class="form-group">
-                <label for="scheduler_minute">minute</label>
-                <input type="number" id="scheduler_minute" name="scheduler_minute" min="0" max="59" value="{{ settings.scheduler.minute }}" class="form-control">
-            </div>
+            <input type="hidden" name="scheduler_interval" value="{{ settings.scheduler.interval }}">
+            <input type="hidden" name="scheduler_hour" value="{{ settings.scheduler.hour }}">
+            <input type="hidden" name="scheduler_minute" value="{{ settings.scheduler.minute }}">
             <div class="form-group">
                 <label for="scheduler_lookback_days">録音対象期間</label>
                 <select id="scheduler_lookback_days" name="scheduler_lookback_days" class="form-control">
@@ -123,6 +109,7 @@
 
     <div class="job-status-box">
         <h3>Scheduler systemd status</h3>
+        <p class="settings-help">定期実行: 毎時 / 管理方式: systemd timer（読み取り専用）</p>
         <div class="settings-summary">
             <span>Service:
                 {% if scheduler_status.service_ok %}
